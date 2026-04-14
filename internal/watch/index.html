@@ -5,78 +5,171 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>mcp-browser watch</title>
   <link rel="stylesheet" href="https://unpkg.com/frankenstyle@latest/dist/css/frankenstyle.min.css" />
-  <script src="https://unpkg.com/frankenstyle@latest/dist/js/frankenstyle.min.js"></script>
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <style>
     :root { --spacing: 0.25rem; }
     body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
     .snapshot-img { image-rendering: auto; }
+    .card { cursor: pointer; transition: transform .1s ease; }
+    .card:hover { transform: translateY(-2px); }
+    .thumb { aspect-ratio: 16 / 9; object-fit: cover; width: 100%; display: block; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body class="bg dark:bg color dark:color"
       style="--bg: #0b0c0f; --color: #e5e7eb; --dark-bg: #0b0c0f; --dark-color: #e5e7eb;">
-  <div class="p"
-       style="--p: 6;">
-    <header class="mb"
-            style="--mb: 6;">
-      <h1 class="font-size font-bold"
-          style="--font-size: 1.5rem;">mcp-browser watch</h1>
-      <p class="color/o"
-         style="--color: #9ca3af; --color-o: 100%;">Live screenshots from MCP sessions</p>
+  <div class="p" style="--p: 6;">
+    <header class="mb" style="--mb: 6;">
+      <h1 class="font-size font-bold" style="--font-size: 1.5rem;">mcp-browser watch</h1>
+      <p class="color/o" style="--color: #9ca3af; --color-o: 100%;">Live screenshots from MCP sessions</p>
     </header>
 
-    <main id="sessions"
-          class="grid-cols gap"
-          style="--grid-cols: 1; --gap: 6;"
-          hx-get="/watch/snapshots"
-          hx-trigger="load, every 2s"
-          hx-swap="innerHTML"
-          hx-target="#sessions">
-      <p class="color/o" style="--color: #6b7280; --color-o: 100%;">Loading…</p>
+    <main>
+      <div id="list-view">
+        <div id="sessions"
+             class="grid-cols gap"
+             style="--grid-cols: 1; --gap: 4;">
+          <p class="color/o" style="--color: #6b7280; --color-o: 100%;">Loading…</p>
+        </div>
+      </div>
+
+      <div id="detail-view" class="hidden">
+        <button id="back-btn"
+                class="mb px py rounded border-w border-solid font-medium"
+                style="--mb: 4; --px: 3; --py: 1.5; --rounded: 0.375rem; --border-w: 1px; --border: #374151; --bg: #1f2937;">
+          ← Back to sessions
+        </button>
+        <div id="detail-content"></div>
+      </div>
     </main>
   </div>
 
-  <template id="tmpl-sessions">
-    <div data-sessions></div>
-  </template>
-
   <script>
     (function () {
-      const container = document.getElementById('sessions');
-      container.addEventListener('htmx:afterRequest', function (e) {
-        if (!e.detail.successful) return;
-        let data;
-        try { data = JSON.parse(e.detail.xhr.responseText); } catch (_) { return; }
-        if (!Array.isArray(data) || data.length === 0) {
-          container.innerHTML = '<p class="color/o" style="--color:#6b7280;--color-o:100%;">No sessions yet.</p>';
+      const sessionsEl = document.getElementById('sessions');
+      const listView   = document.getElementById('list-view');
+      const detailView = document.getElementById('detail-view');
+      const detailContent = document.getElementById('detail-content');
+      const backBtn    = document.getElementById('back-btn');
+
+      let snapshots = [];
+      let currentSessionId = null;
+
+      function loadSnapshots() {
+        fetch('/watch/snapshots')
+          .then(r => r.json())
+          .then(data => {
+            if (!Array.isArray(data)) return;
+            snapshots = data;
+            renderList();
+            if (currentSessionId) renderDetail(currentSessionId);
+          })
+          .catch(() => {
+            sessionsEl.innerHTML = '<p class="color/o" style="--color:#6b7280;--color-o:100%;">Failed to load sessions.</p>';
+          });
+      }
+
+      function renderList() {
+        if (snapshots.length === 0) {
+          sessionsEl.innerHTML = '<p class="color/o" style="--color:#6b7280;--color-o:100%;">No sessions yet.</p>';
           return;
         }
-        container.innerHTML = data.map(s => `
-          <article class="bg/o rounded-lg border-w border-solid overflow-hidden"
-                   style="--bg:#111318;--bg-o:100%;--border-w:1px;--border:#1f2937;--rounded-lg:0.75rem;">
-            <div class="px py border-b-w border-solid flex justify-between items-center"
-                 style="--px:5;--py:3;--border-b-w:1px;--border-b:#1f2937;">
-              <div>
-                <div class="font-medium" style="font-size:0.9375rem;">${escapeHtml(s.title || 'Untitled')}</div>
-                <div class="font-size color/o"
-                     style="--font-size:0.75rem;--color:#9ca3af;--color-o:100%;">${escapeHtml(s.url || '')}</div>
-              </div>
-              <div class="text-right">
-                <div class="font-size color/o"
-                     style="--font-size:0.75rem;--color:#9ca3af;--color-o:100%;">${escapeHtml(s.sessionId)}</div>
+        sessionsEl.innerHTML = snapshots.map(s => `
+          <article class="card bg/o rounded-lg border-w border-solid overflow-hidden"
+                   style="--bg:#111318;--bg-o:100%;--border-w:1px;--border:#1f2937;--rounded-lg:0.75rem;"
+                   data-session="${escapeHtml(s.sessionId)}">
+            <img src="data:image/png;base64,${s.image || ''}"
+                 alt="screenshot"
+                 class="thumb"
+                 style="background:#0b0c0f;" />
+            <div class="px py" style="--px:4;--py:3;">
+              <div class="font-medium truncate" style="font-size:0.9375rem;">${escapeHtml(s.title || 'Untitled')}</div>
+              <div class="font-size color/o truncate"
+                   style="--font-size:0.75rem;--color:#9ca3af;--color-o:100%;">${escapeHtml(s.url || '')}</div>
+              <div class="mt flex justify-between items-center"
+                   style="--mt:2;">
                 <div class="font-size color/o"
                      style="--font-size:0.75rem;--color:#6b7280;--color-o:100%;">${timeAgo(s.timestamp)}</div>
+                <div class="font-size color/o"
+                     style="--font-size:0.75rem;--color:#4b5563;--color-o:100%;">${escapeHtml(s.sessionId)}</div>
               </div>
-            </div>
-            <div class="p" style="--p:4;">
-              <img src="data:image/png;base64,${s.image ? arrayBufferToBase64(s.image) : ''}"
-                   alt="screenshot"
-                   class="w-full rounded snapshot-img"
-                   style="--rounded:0.5rem;" />
             </div>
           </article>
         `).join('');
+      }
+
+      function renderDetail(sessionId) {
+        const s = snapshots.find(x => x.sessionId === sessionId);
+        if (!s) {
+          showList();
+          return;
+        }
+        detailContent.innerHTML = `
+          <div class="mb px py border-b-w border-solid flex flex-col gap"
+               style="--mb:4;--px:5;--py:4;--border-b-w:1px;--border-b:#1f2937;--gap:2;">
+            <div>
+              <div class="font-medium" style="font-size:1.125rem;">${escapeHtml(s.title || 'Untitled')}</div>
+              <div class="font-size color/o" style="--font-size:0.875rem;--color:#9ca3af;--color-o:100%;">${escapeHtml(s.url || '')}</div>
+            </div>
+            <div class="flex justify-between items-center">
+              <div class="font-size color/o" style="--font-size:0.75rem;--color:#6b7280;--color-o:100%;">${escapeHtml(s.sessionId)}</div>
+              <div class="font-size color/o" style="--font-size:0.75rem;--color:#6b7280;--color-o:100%;">${timeAgo(s.timestamp)}</div>
+            </div>
+          </div>
+          <div class="p" style="--p:4;">
+            <img src="data:image/png;base64,${s.image || ''}"
+                 alt="screenshot"
+                 class="w-full rounded snapshot-img"
+                 style="--rounded:0.5rem;" />
+          </div>
+        `;
+      }
+
+      function showList() {
+        currentSessionId = null;
+        history.replaceState(null, '', '/watch');
+        detailView.classList.add('hidden');
+        listView.classList.remove('hidden');
+      }
+
+      function showDetail(sessionId) {
+        currentSessionId = sessionId;
+        history.replaceState(null, '', '/watch?session=' + encodeURIComponent(sessionId));
+        listView.classList.add('hidden');
+        detailView.classList.remove('hidden');
+        renderDetail(sessionId);
+      }
+
+      sessionsEl.addEventListener('click', function (e) {
+        const card = e.target.closest('[data-session]');
+        if (!card) return;
+        showDetail(card.dataset.session);
       });
+
+      backBtn.addEventListener('click', showList);
+
+      function handleSnapshotEvent(snap) {
+        const idx = snapshots.findIndex(x => x.sessionId === snap.sessionId);
+        if (idx >= 0) snapshots[idx] = snap;
+        else snapshots.push(snap);
+        snapshots.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        renderList();
+        if (currentSessionId && currentSessionId === snap.sessionId) {
+          renderDetail(currentSessionId);
+        }
+      }
+
+      function initEventSource() {
+        const es = new EventSource('/watch/events');
+        es.onmessage = function (e) {
+          let snap;
+          try { snap = JSON.parse(e.data); } catch (_) { return; }
+          handleSnapshotEvent(snap);
+        };
+        es.onerror = function () {
+          es.close();
+          setTimeout(initEventSource, 3000);
+        };
+      }
 
       function escapeHtml(str) {
         return String(str).replace(/[&<>"']/g, function (m) {
@@ -91,10 +184,12 @@
         if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
         return Math.floor(diff / 3600) + 'h ago';
       }
-      function arrayBufferToBase64(bytes) {
-        const bin = bytes.map(function (b) { return String.fromCharCode(b); }).join('');
-        return btoa(bin);
-      }
+
+      const params = new URLSearchParams(location.search);
+      const startSession = params.get('session');
+      loadSnapshots();
+      initEventSource();
+      if (startSession) showDetail(startSession);
     })();
   </script>
 </body>
