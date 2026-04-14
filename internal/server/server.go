@@ -10,6 +10,7 @@ import (
 
 	"github.com/angoo/mcp-browser/internal/config"
 	"github.com/angoo/mcp-browser/internal/middleware"
+	"github.com/angoo/mcp-browser/internal/watch"
 )
 
 type Server struct {
@@ -17,13 +18,15 @@ type Server struct {
 	cfg        *config.Config
 	logger     *slog.Logger
 	mcpHandler http.Handler
+	watchStore *watch.Store
 }
 
-func New(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler) *Server {
+func New(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler, watchStore *watch.Store) *Server {
 	s := &Server{
 		cfg:        cfg,
 		logger:     logger,
 		mcpHandler: mcpHandler,
+		watchStore: watchStore,
 	}
 	s.router = chi.NewRouter()
 	s.setupMiddleware()
@@ -57,6 +60,14 @@ func (s *Server) setupMiddleware() {
 
 func (s *Server) setupRoutes() {
 	s.router.Get("/", s.handleIndex)
+	if s.watchStore != nil {
+		auth := middleware.NewAuth(s.cfg.APIKey, s.logger)
+		if s.cfg.DisableAuth {
+			s.router.Mount("/watch", watch.Handler(s.watchStore))
+		} else {
+			s.router.With(auth.RequireAuth).Mount("/watch", watch.Handler(s.watchStore))
+		}
+	}
 }
 
 func (s *Server) parseCorsOrigins() []string {

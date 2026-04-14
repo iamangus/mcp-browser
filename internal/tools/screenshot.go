@@ -5,11 +5,12 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/angoo/mcp-browser/internal/watch"
 	"github.com/chromedp/chromedp"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func screenshotHandler(defaultQuality int) func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func screenshotHandler(defaultQuality int, store *watch.Store) func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		quality := defaultQuality
 		if q := request.GetFloat("quality", float64(defaultQuality)); q > 0 {
@@ -61,6 +62,7 @@ func screenshotHandler(defaultQuality int) func(ctx context.Context, request mcp
 			return mcpErrorResult(fmt.Sprintf("screenshot failed: %v", err)), nil
 		}
 		b64 := base64.StdEncoding.EncodeToString(buf)
+		saveSnapshot(ctx, store, buf, "browser_screenshot")
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{mcp.NewImageContent(b64, "image/png")},
 		}, nil

@@ -2,8 +2,11 @@ package tools
 
 import (
 	"context"
+	"time"
 
 	"github.com/angoo/mcp-browser/internal/browser"
+	"github.com/angoo/mcp-browser/internal/watch"
+	"github.com/chromedp/chromedp"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -12,7 +15,7 @@ type browserKey struct{}
 
 var BrowserKey = browserKey{}
 
-func RegisterTools(s *server.MCPServer, screenshotQuality int) {
+func RegisterTools(s *server.MCPServer, screenshotQuality int, snapshotStore *watch.Store) {
 	s.AddTool(mcp.NewTool("browser_navigate",
 		mcp.WithDescription("Navigate to a URL in the browser. Returns the page title and final URL after navigation."),
 		mcp.WithString("url", mcp.Description("The URL to navigate to"), mcp.Required()),
@@ -26,7 +29,7 @@ func RegisterTools(s *server.MCPServer, screenshotQuality int) {
 		mcp.WithNumber("width", mcp.Description("Override viewport width for the screenshot.")),
 		mcp.WithNumber("height", mcp.Description("Override viewport height for the screenshot.")),
 		mcp.WithBoolean("fullPage", mcp.Description("Whether to take a full page screenshot (scroll capture). Default: false.")),
-	), screenshotHandler(screenshotQuality))
+	), screenshotHandler(screenshotQuality, snapshotStore))
 
 	s.AddTool(mcp.NewTool("browser_click",
 		mcp.WithDescription("Click on an element matching a CSS selector. Scrolls the element into view if needed."),
@@ -149,4 +152,35 @@ func getPageCtx(ctx context.Context) context.Context {
 		return nil
 	}
 	return pc
+}
+
+func getSessionID(ctx context.Context) string {
+	session := server.ClientSessionFromContext(ctx)
+	if session != nil {
+		return session.SessionID()
+	}
+	return "default"
+}
+
+func saveSnapshot(ctx context.Context, store *watch.Store, image []byte, toolName string) {
+	if store == nil {
+		return
+	}
+	pageCtx := getPageCtx(ctx)
+	if pageCtx == nil {
+		return
+	}
+	var title, url string
+	_ = chromedp.Run(pageCtx,
+		chromedp.Title(&title),
+		chromedp.Evaluate(`window.location.href`, &url),
+	)
+	store.Save(&watch.Snapshot{
+		SessionID: getSessionID(ctx),
+		URL:       url,
+		Title:     title,
+		Image:     image,
+		ToolName:  toolName,
+		Timestamp: time.Now(),
+	})
 }

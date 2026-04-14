@@ -15,6 +15,7 @@ import (
 	"github.com/angoo/mcp-browser/internal/logger"
 	appserver "github.com/angoo/mcp-browser/internal/server"
 	"github.com/angoo/mcp-browser/internal/tools"
+	"github.com/angoo/mcp-browser/internal/watch"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -44,11 +45,13 @@ func run() error {
 	}
 	defer browserMgr.Shutdown()
 
+	snapshotStore := watch.NewStore()
+
 	mcpSrv := server.NewMCPServer("mcp-browser", "1.0.0",
 		server.WithLogging(),
 	)
 	mcpSrv.Use(tools.BrowserContextMiddleware(browserMgr))
-	tools.RegisterTools(mcpSrv, cfg.ScreenshotQuality)
+	tools.RegisterTools(mcpSrv, cfg.ScreenshotQuality, snapshotStore)
 	log.Info("tools registered", "count", 16)
 
 	mcpHTTP := server.NewStreamableHTTPServer(mcpSrv,
@@ -57,7 +60,7 @@ func run() error {
 		server.WithEndpointPath("/"),
 	)
 
-	srv := appserver.New(cfg, log, mcpHTTP)
+	srv := appserver.New(cfg, log, mcpHTTP, snapshotStore)
 	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
 	httpServer := &http.Server{
 		Addr:         addr,

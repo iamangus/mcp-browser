@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mcp-browser watch</title>
+  <link rel="stylesheet" href="https://unpkg.com/frankenstyle@latest/dist/css/frankenstyle.min.css" />
+  <script src="https://unpkg.com/frankenstyle@latest/dist/js/frankenstyle.min.js"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    :root { --spacing: 0.25rem; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+    .snapshot-img { image-rendering: auto; }
+  </style>
+</head>
+<body class="bg dark:bg color dark:color"
+      style="--bg: #0b0c0f; --color: #e5e7eb; --dark-bg: #0b0c0f; --dark-color: #e5e7eb;">
+  <div class="p"
+       style="--p: 6;">
+    <header class="mb"
+            style="--mb: 6;">
+      <h1 class="font-size font-bold"
+          style="--font-size: 1.5rem;">mcp-browser watch</h1>
+      <p class="color/o"
+         style="--color: #9ca3af; --color-o: 100%;">Live screenshots from MCP sessions</p>
+    </header>
+
+    <main id="sessions"
+          class="grid-cols gap"
+          style="--grid-cols: 1; --gap: 6;"
+          hx-get="/watch/snapshots"
+          hx-trigger="load, every 2s"
+          hx-swap="innerHTML"
+          hx-target="#sessions">
+      <p class="color/o" style="--color: #6b7280; --color-o: 100%;">Loading…</p>
+    </main>
+  </div>
+
+  <template id="tmpl-sessions">
+    <div data-sessions></div>
+  </template>
+
+  <script>
+    (function () {
+      const container = document.getElementById('sessions');
+      container.addEventListener('htmx:afterRequest', function (e) {
+        if (!e.detail.successful) return;
+        let data;
+        try { data = JSON.parse(e.detail.xhr.responseText); } catch (_) { return; }
+        if (!Array.isArray(data) || data.length === 0) {
+          container.innerHTML = '<p class="color/o" style="--color:#6b7280;--color-o:100%;">No sessions yet.</p>';
+          return;
+        }
+        container.innerHTML = data.map(s => `
+          <article class="bg/o rounded-lg border-w border-solid overflow-hidden"
+                   style="--bg:#111318;--bg-o:100%;--border-w:1px;--border:#1f2937;--rounded-lg:0.75rem;">
+            <div class="px py border-b-w border-solid flex justify-between items-center"
+                 style="--px:5;--py:3;--border-b-w:1px;--border-b:#1f2937;">
+              <div>
+                <div class="font-medium" style="font-size:0.9375rem;">${escapeHtml(s.title || 'Untitled')}</div>
+                <div class="font-size color/o"
+                     style="--font-size:0.75rem;--color:#9ca3af;--color-o:100%;">${escapeHtml(s.url || '')}</div>
+              </div>
+              <div class="text-right">
+                <div class="font-size color/o"
+                     style="--font-size:0.75rem;--color:#9ca3af;--color-o:100%;">${escapeHtml(s.sessionId)}</div>
+                <div class="font-size color/o"
+                     style="--font-size:0.75rem;--color:#6b7280;--color-o:100%;">${timeAgo(s.timestamp)}</div>
+              </div>
+            </div>
+            <div class="p" style="--p:4;">
+              <img src="data:image/png;base64,${s.image ? arrayBufferToBase64(s.image) : ''}"
+                   alt="screenshot"
+                   class="w-full rounded snapshot-img"
+                   style="--rounded:0.5rem;" />
+            </div>
+          </article>
+        `).join('');
+      });
+
+      function escapeHtml(str) {
+        return String(str).replace(/[&<>"']/g, function (m) {
+          return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m];
+        });
+      }
+      function timeAgo(iso) {
+        const d = new Date(iso);
+        const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+        if (diff < 5) return 'just now';
+        if (diff < 60) return diff + 's ago';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        return Math.floor(diff / 3600) + 'h ago';
+      }
+      function arrayBufferToBase64(bytes) {
+        const bin = bytes.map(function (b) { return String.fromCharCode(b); }).join('');
+        return btoa(bin);
+      }
+    })();
+  </script>
+</body>
+</html>
