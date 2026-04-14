@@ -62,10 +62,14 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/", s.handleIndex)
 	if s.watchStore != nil {
 		auth := middleware.NewAuth(s.cfg.APIKey, s.logger)
+		watchHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Del("Content-Security-Policy")
+			watch.Handler(s.watchStore).ServeHTTP(w, r)
+		})
 		if s.cfg.DisableAuth {
-			s.router.Mount("/watch", watch.Handler(s.watchStore))
+			s.router.Mount("/watch", watchHandler)
 		} else {
-			s.router.With(auth.RequireAuth).Mount("/watch", watch.Handler(s.watchStore))
+			s.router.With(auth.RequireAuth).Mount("/watch", watchHandler)
 		}
 	}
 }
