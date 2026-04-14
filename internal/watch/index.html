@@ -51,11 +51,13 @@
       const detailContent = document.getElementById('detail-content');
       const backBtn    = document.getElementById('back-btn');
 
+      const WATCH_BASE = location.pathname.replace(/\/$/, '') || '';
+
       let snapshots = [];
       let currentSessionId = null;
 
       function loadSnapshots() {
-        fetch('/watch/snapshots')
+        fetch(WATCH_BASE + '/snapshots')
           .then(r => r.json())
           .then(data => {
             if (!Array.isArray(data)) return;
@@ -126,14 +128,14 @@
 
       function showList() {
         currentSessionId = null;
-        history.replaceState(null, '', '/watch');
+        history.replaceState(null, '', WATCH_BASE + '/');
         detailView.classList.add('hidden');
         listView.classList.remove('hidden');
       }
 
       function showDetail(sessionId) {
         currentSessionId = sessionId;
-        history.replaceState(null, '', '/watch?session=' + encodeURIComponent(sessionId));
+        history.replaceState(null, '', WATCH_BASE + '/?session=' + encodeURIComponent(sessionId));
         listView.classList.add('hidden');
         detailView.classList.remove('hidden');
         renderDetail(sessionId);
@@ -159,7 +161,7 @@
       }
 
       function initEventSource() {
-        const es = new EventSource('/watch/events');
+        const es = new EventSource(WATCH_BASE + '/events');
         es.onmessage = function (e) {
           let snap;
           try { snap = JSON.parse(e.data); } catch (_) { return; }
