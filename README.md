@@ -61,43 +61,43 @@ All `/mcp` requests require `Authorization: Bearer <API_KEY>` unless auth is dis
 
 | Tool | Description |
 |---|---|
-| `puppeteer_navigate` | Navigate to a URL. Returns page title and final URL. |
-| `puppeteer_screenshot` | Capture a screenshot (full page or element). Returns base64 PNG. |
+| `browser_navigate` | Navigate to a URL. Returns page title and final URL. |
+| `browser_screenshot` | Capture a screenshot (full page or element). Returns base64 PNG. |
 
 ### Interaction
 
 | Tool | Description |
 |---|---|
-| `puppeteer_click` | Click an element by CSS selector. |
-| `puppeteer_fill` | Fill an input field (clears first, works with React). |
-| `puppeteer_select` | Select a dropdown option by value or text. |
-| `puppeteer_hover` | Hover over an element (detects tooltips/popovers). |
-| `puppeteer_evaluate` | Execute JavaScript (dangerous patterns blocked). |
+| `browser_click` | Click an element by CSS selector. |
+| `browser_fill` | Fill an input field (clears first, works with React). |
+| `browser_select` | Select a dropdown option by value or text. |
+| `browser_hover` | Hover over an element (detects tooltips/popovers). |
+| `browser_evaluate` | Execute JavaScript (dangerous patterns blocked). |
 
 ### Mouse Control
 
 | Tool | Description |
 |---|---|
-| `puppeteer_mouse_click` | Click at x,y coordinates with configurable button/count. |
-| `puppeteer_mouse_move` | Move mouse to x,y with optional smooth steps. |
-| `puppeteer_mouse_down` | Press and hold mouse button at coordinates. |
-| `puppeteer_mouse_up` | Release mouse button at coordinates. |
-| `puppeteer_mouse_drag` | Drag from start to end coordinates. |
-| `puppeteer_mouse_wheel` | Scroll at coordinates with configurable delta. |
+| `browser_mouse_click` | Click at x,y coordinates with configurable button/count. |
+| `browser_mouse_move` | Move mouse to x,y with optional smooth steps. |
+| `browser_mouse_down` | Press and hold mouse button at coordinates. |
+| `browser_mouse_up` | Release mouse button at coordinates. |
+| `browser_mouse_drag` | Drag from start to end coordinates. |
+| `browser_mouse_wheel` | Scroll at coordinates with configurable delta. |
 
 ### Cookies
 
 | Tool | Description |
 |---|---|
-| `puppeteer_get_cookies` | Get cookies, optionally filtered by name or domain. |
-| `puppeteer_set_cookies` | Set cookies (auth tokens, sessions, etc.). |
-| `puppeteer_delete_cookies` | Delete cookies by name (use `*` for all). |
+| `browser_get_cookies` | Get cookies, optionally filtered by name or domain. |
+| `browser_set_cookies` | Set cookies (auth tokens, sessions, etc.). |
+| `browser_delete_cookies` | Delete cookies by name (use `*` for all). |
 
 ## Security
 
 - **Auth**: Bearer token required on all MCP requests (disable with `DISABLE_AUTH=true`)
 - **SSRF protection**: Navigation blocks `localhost`, private IPs, and non-HTTP schemes
-- **JS sandboxing**: `eval`, `fetch`, `require`, `process`, `import` are blocked in `puppeteer_evaluate`
+- **JS sandboxing**: `eval`, `fetch`, `require`, `process`, `import` are blocked in `browser_evaluate`
 - **Rate limiting**: Sliding window per API key (falls back to IP)
 - **Security headers**: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, CSP, etc.
 
