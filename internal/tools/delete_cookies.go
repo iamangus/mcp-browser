@@ -25,7 +25,7 @@ func deleteCookiesHandler() func(ctx context.Context, request mcp.CallToolReques
 		}
 		pageCtx := getPageCtx(ctx)
 		currentDomain := ""
-		chromedp.Run(pageCtx, chromedp.Evaluate(`window.location.hostname`, &currentDomain))
+		_ = chromedp.Run(pageCtx, chromedp.Evaluate(`window.location.hostname`, &currentDomain))
 		var results []string
 		totalDeleted := 0
 		for i, cookie := range rawCookies {

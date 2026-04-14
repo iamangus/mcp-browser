@@ -30,7 +30,7 @@ func mouseUpHandler() func(ctx context.Context, request mcp.CallToolRequest) (*m
 		btnNum := mouseButtonToNumber(button)
 		pageCtx := getPageCtx(ctx)
 		var titleBefore, titleAfter, urlBefore, urlAfter string
-		chromedp.Run(pageCtx,
+		_ = chromedp.Run(pageCtx,
 			chromedp.Title(&titleBefore),
 			chromedp.Evaluate(`window.location.href`, &urlBefore),
 		)
@@ -48,7 +48,7 @@ func mouseUpHandler() func(ctx context.Context, request mcp.CallToolRequest) (*m
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("mouse up failed: %v", err)), nil
 		}
-		chromedp.Run(pageCtx,
+		_ = chromedp.Run(pageCtx,
 			chromedp.Title(&titleAfter),
 			chromedp.Evaluate(`window.location.href`, &urlAfter),
 		)

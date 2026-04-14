@@ -34,7 +34,7 @@ func mouseClickHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 		buttonNum := mouseButtonToNumber(button)
 		pageCtx := getPageCtx(ctx)
 		var titleBefore, titleAfter, urlBefore, urlAfter string
-		chromedp.Run(pageCtx,
+		_ = chromedp.Run(pageCtx,
 			chromedp.Title(&titleBefore),
 			chromedp.Evaluate(`window.location.href`, &urlBefore),
 		)
@@ -57,7 +57,7 @@ func mouseClickHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("mouse click failed: %v", err)), nil
 		}
-		chromedp.Run(pageCtx,
+		_ = chromedp.Run(pageCtx,
 			chromedp.Title(&titleAfter),
 			chromedp.Evaluate(`window.location.href`, &urlAfter),
 		)

@@ -76,7 +76,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{
+	if _, err := w.Write([]byte(`{
   "name": "mcp-browser",
   "version": "1.0.0",
   "transport": "streamable-http",
@@ -84,10 +84,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
     "mcp": "POST/GET/DELETE /mcp (Streamable HTTP)",
     "health": "GET /health"
   }
-}`))
+}`)); err != nil {
+		s.logger.Error("failed to write index response", "error", err)
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok"}`))
+	if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
+		s.logger.Error("failed to write health response", "error", err)
+	}
 }

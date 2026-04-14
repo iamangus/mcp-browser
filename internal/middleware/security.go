@@ -3,6 +3,7 @@ package middleware
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -22,9 +23,11 @@ func RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
+		cleanPath := strings.ReplaceAll(r.URL.Path, "\n", "")
+		cleanPath = strings.ReplaceAll(cleanPath, "\r", "")
 		slog.Info("request",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", cleanPath,
 			"remote", r.RemoteAddr,
 			"duration", time.Since(start),
 		)

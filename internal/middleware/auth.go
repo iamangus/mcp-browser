@@ -51,6 +51,8 @@ func constantTimeEqual(a, b string) bool {
 func (a *AuthMiddleware) sendUnauthorized(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
+		a.logger.Error("failed to write auth error response", "error", err)
+	}
 	a.logger.Warn("auth failed", "message", msg)
 }

@@ -36,7 +36,7 @@ func clickHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("click failed: %v", err)), nil
 		}
-		chromedp.Run(pageCtx,
+		_ = chromedp.Run(pageCtx,
 			chromedp.Title(&titleAfter),
 			chromedp.Evaluate(`window.location.href`, &urlAfter),
 		)

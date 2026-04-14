@@ -22,11 +22,26 @@ func screenshotHandler(defaultQuality int) func(ctx context.Context, request mcp
 			quality = 100
 		}
 		pageCtx := getPageCtx(ctx)
+		viewportW := int64(0)
+		viewportH := int64(0)
 		if w := request.GetFloat("width", 0); w > 0 {
-			chromedp.Run(pageCtx, chromedp.EmulateViewport(int64(w), 720))
+			viewportW = int64(w)
 		}
 		if h := request.GetFloat("height", 0); h > 0 {
-			chromedp.Run(pageCtx, chromedp.EmulateViewport(1280, int64(h)))
+			viewportH = int64(h)
+		}
+		if viewportW > 0 || viewportH > 0 {
+			vw := viewportW
+			vh := viewportH
+			if vw == 0 {
+				vw = 1280
+			}
+			if vh == 0 {
+				vh = 720
+			}
+			if err := chromedp.Run(pageCtx, chromedp.EmulateViewport(vw, vh)); err != nil {
+				return mcpErrorResult(fmt.Sprintf("failed to set viewport: %v", err)), nil
+			}
 		}
 		var buf []byte
 		var err error

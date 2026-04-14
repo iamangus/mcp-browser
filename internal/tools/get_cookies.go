@@ -27,7 +27,7 @@ func getCookiesHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 			return mcpErrorResult(fmt.Sprintf("get cookies failed: %v", err)), nil
 		}
 		currentDomain := ""
-		chromedp.Run(pageCtx, chromedp.Evaluate(`window.location.hostname`, &currentDomain))
+		_ = chromedp.Run(pageCtx, chromedp.Evaluate(`window.location.hostname`, &currentDomain))
 
 		namesStr := request.GetString("names", "")
 		var filterNames []string
