@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -45,5 +46,8 @@ func (s *Store) List() []*Snapshot {
 	for _, snap := range s.snapshots {
 		out = append(out, snap)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Timestamp.After(out[j].Timestamp)
+	})
 	return out
 }
