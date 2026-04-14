@@ -25,7 +25,7 @@ func RequestLogger(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		cleanPath := strings.ReplaceAll(r.URL.Path, "\n", "")
 		cleanPath = strings.ReplaceAll(cleanPath, "\r", "")
-		slog.Info("request",
+		slog.Info("request", //nolint:gosec
 			"method", r.Method,
 			"path", cleanPath,
 			"remote", r.RemoteAddr,
