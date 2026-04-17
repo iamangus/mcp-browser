@@ -67,6 +67,7 @@ func (m *BrowserManager) Start() error {
 		chromedp.Flag("disable-renderer-backgrounding", true),
 		chromedp.Flag("disable-features", "TranslateUI"),
 		chromedp.Flag("disable-ipc-flooding-protection", true),
+		chromedp.Flag("disk-cache-dir", "/dev/null"),
 		chromedp.WindowSize(m.cfg.ScreenshotWidth, m.cfg.ScreenshotHeight),
 	)
 	if m.cfg.ChromiumPath != "" {
