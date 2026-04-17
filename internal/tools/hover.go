@@ -20,6 +20,7 @@ func hoverHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp
 			return mcpErrorResult(err.Error()), nil
 		}
 		pageCtx := getPageCtx(ctx)
+		timeout := getBrowserTimeout(ctx)
 		script := fmt.Sprintf(`(function(){
 		var el = document.querySelector(%q);
 		if (!el) throw new Error('Element not found: ' + %q);
@@ -32,12 +33,15 @@ func hoverHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		return {x: Math.round(x), y: Math.round(y), width: Math.round(rect.width), height: Math.round(rect.height)};
 		})()`, selector, selector)
 		var result map[string]any
-		err = chromedp.Run(pageCtx,
+		err = runWithTimeout(pageCtx, timeout,
 			chromedp.WaitVisible(selector, chromedp.ByQuery),
 			chromedp.Evaluate(script, &result),
 			chromedp.Sleep(1*time.Second),
 		)
 		if err != nil {
+			if isTimeoutError(err) {
+				return mcpErrorResult(fmt.Sprintf("Timeout after %v: element '%s' not found or not visible. Try taking a screenshot to see the current page state.", timeout, selector)), nil
+			}
 			return mcpErrorResult(fmt.Sprintf("hover failed: %v", err)), nil
 		}
 		return &mcp.CallToolResult{

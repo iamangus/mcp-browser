@@ -23,6 +23,7 @@ func selectHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mc
 			return mcpErrorResult(err.Error()), nil
 		}
 		pageCtx := getPageCtx(ctx)
+		timeout := getBrowserTimeout(ctx)
 		script := fmt.Sprintf(`(function(){
 		var sel = document.querySelector(%q);
 		if (!sel) throw new Error('Select element not found: ' + %q);
@@ -38,11 +39,14 @@ func selectHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mc
 		return {selected: matched.value, text: matched.text, allOptions: options};
 		})()`, selector, selector, value, value)
 		var result map[string]any
-		err = chromedp.Run(pageCtx,
+		err = runWithTimeout(pageCtx, timeout,
 			chromedp.WaitVisible(selector, chromedp.ByQuery),
 			chromedp.Evaluate(script, &result),
 		)
 		if err != nil {
+			if isTimeoutError(err) {
+				return mcpErrorResult(fmt.Sprintf("Timeout after %v: element '%s' not found or not visible. Try taking a screenshot to see the current page state.", timeout, selector)), nil
+			}
 			return mcpErrorResult(fmt.Sprintf("select failed: %v", err)), nil
 		}
 		return &mcp.CallToolResult{

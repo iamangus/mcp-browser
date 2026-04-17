@@ -20,23 +20,27 @@ func clickHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp
 			return mcpErrorResult(err.Error()), nil
 		}
 		pageCtx := getPageCtx(ctx)
+		timeout := getBrowserTimeout(ctx)
 		var titleBefore, titleAfter, urlBefore, urlAfter string
-		err = chromedp.Run(pageCtx,
+		err = runWithTimeout(pageCtx, timeout,
 			chromedp.Title(&titleBefore),
 			chromedp.Evaluate(`window.location.href`, &urlBefore),
 		)
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("failed to get page state before click: %v", err)), nil
 		}
-		err = chromedp.Run(pageCtx,
+		err = runWithTimeout(pageCtx, timeout,
 			chromedp.WaitVisible(selector, chromedp.ByQuery),
 			chromedp.Click(selector, chromedp.ByQuery),
 			chromedp.Sleep(500*time.Millisecond),
 		)
 		if err != nil {
+			if isTimeoutError(err) {
+				return mcpErrorResult(fmt.Sprintf("Timeout after %v: element '%s' not found or not visible. Try taking a screenshot to see the current page state.", timeout, selector)), nil
+			}
 			return mcpErrorResult(fmt.Sprintf("click failed: %v", err)), nil
 		}
-		_ = chromedp.Run(pageCtx,
+		_ = runWithTimeout(pageCtx, timeout,
 			chromedp.Title(&titleAfter),
 			chromedp.Evaluate(`window.location.href`, &urlAfter),
 		)

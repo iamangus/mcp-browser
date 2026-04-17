@@ -23,6 +23,7 @@ func screenshotHandler(defaultQuality int, store *watch.Store) func(ctx context.
 			quality = 100
 		}
 		pageCtx := getPageCtx(ctx)
+		timeout := getBrowserTimeout(ctx)
 		viewportW := int64(0)
 		viewportH := int64(0)
 		if w := request.GetFloat("width", 0); w > 0 {
@@ -40,7 +41,7 @@ func screenshotHandler(defaultQuality int, store *watch.Store) func(ctx context.
 			if vh == 0 {
 				vh = 720
 			}
-			if err := chromedp.Run(pageCtx, chromedp.EmulateViewport(vw, vh)); err != nil {
+			if err := runWithTimeout(pageCtx, timeout, chromedp.EmulateViewport(vw, vh)); err != nil {
 				return mcpErrorResult(fmt.Sprintf("failed to set viewport: %v", err)), nil
 			}
 		}
@@ -49,16 +50,19 @@ func screenshotHandler(defaultQuality int, store *watch.Store) func(ctx context.
 		selector := request.GetString("selector", "")
 		fullPage := request.GetBool("fullPage", false)
 		if selector != "" {
-			err = chromedp.Run(pageCtx,
+			err = runWithTimeout(pageCtx, timeout,
 				chromedp.WaitVisible(selector, chromedp.ByQuery),
 				chromedp.Screenshot(selector, &buf, chromedp.ByQuery),
 			)
 		} else if fullPage {
-			err = chromedp.Run(pageCtx, chromedp.FullScreenshot(&buf, quality))
+			err = runWithTimeout(pageCtx, timeout, chromedp.FullScreenshot(&buf, quality))
 		} else {
-			err = chromedp.Run(pageCtx, chromedp.Screenshot(`body`, &buf, chromedp.ByQuery))
+			err = runWithTimeout(pageCtx, timeout, chromedp.Screenshot(`body`, &buf, chromedp.ByQuery))
 		}
 		if err != nil {
+			if isTimeoutError(err) && selector != "" {
+				return mcpErrorResult(fmt.Sprintf("Timeout after %v: element '%s' not found or not visible. Try a different selector or take a full page screenshot.", timeout, selector)), nil
+			}
 			return mcpErrorResult(fmt.Sprintf("screenshot failed: %v", err)), nil
 		}
 		b64 := base64.StdEncoding.EncodeToString(buf)

@@ -50,7 +50,7 @@ func run() error {
 	mcpSrv := server.NewMCPServer("mcp-browser", "1.0.0",
 		server.WithLogging(),
 	)
-	mcpSrv.Use(tools.BrowserContextMiddleware(browserMgr))
+	mcpSrv.Use(tools.BrowserContextMiddleware(browserMgr, cfg.BrowserTimeout))
 	tools.RegisterTools(mcpSrv, cfg.ScreenshotQuality, snapshotStore)
 	log.Info("tools registered", "count", 16)
 

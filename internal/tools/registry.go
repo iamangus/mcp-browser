@@ -122,7 +122,11 @@ func RegisterTools(s *server.MCPServer, screenshotQuality int, snapshotStore *wa
 	), deleteCookiesHandler())
 }
 
-func BrowserContextMiddleware(bm *browser.BrowserManager) server.ToolHandlerMiddleware {
+type timeoutKey struct{}
+
+var TimeoutKey = timeoutKey{}
+
+func BrowserContextMiddleware(bm *browser.BrowserManager, browserTimeout time.Duration) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			session := server.ClientSessionFromContext(ctx)
@@ -137,9 +141,22 @@ func BrowserContextMiddleware(bm *browser.BrowserManager) server.ToolHandlerMidd
 				return mcpErrorResult("failed to get browser page: " + err.Error()), nil
 			}
 			enrichedCtx := context.WithValue(ctx, BrowserKey, pageCtx)
+			enrichedCtx = context.WithValue(enrichedCtx, TimeoutKey, browserTimeout)
 			return next(enrichedCtx, request)
 		}
 	}
+}
+
+func getBrowserTimeout(ctx context.Context) time.Duration {
+	v := ctx.Value(TimeoutKey)
+	if v == nil {
+		return 30 * time.Second
+	}
+	t, ok := v.(time.Duration)
+	if !ok {
+		return 30 * time.Second
+	}
+	return t
 }
 
 func getPageCtx(ctx context.Context) context.Context {

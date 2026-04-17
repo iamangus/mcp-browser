@@ -23,6 +23,7 @@ func fillHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp.
 			return mcpErrorResult(err.Error()), nil
 		}
 		pageCtx := getPageCtx(ctx)
+		timeout := getBrowserTimeout(ctx)
 		script := fmt.Sprintf(`(function(){
 		var el = document.querySelector(%q);
 		if (!el) throw new Error('Element not found: ' + %q);
@@ -37,11 +38,14 @@ func fillHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp.
 		return el.value;
 		})()`, selector, selector, value, value)
 		var actualValue string
-		err = chromedp.Run(pageCtx,
+		err = runWithTimeout(pageCtx, timeout,
 			chromedp.WaitVisible(selector, chromedp.ByQuery),
 			chromedp.Evaluate(script, &actualValue),
 		)
 		if err != nil {
+			if isTimeoutError(err) {
+				return mcpErrorResult(fmt.Sprintf("Timeout after %v: element '%s' not found or not visible. Try taking a screenshot to see the current page state.", timeout, selector)), nil
+			}
 			return mcpErrorResult(fmt.Sprintf("fill failed: %v", err)), nil
 		}
 		return &mcp.CallToolResult{
