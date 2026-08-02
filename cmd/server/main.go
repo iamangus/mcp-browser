@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,12 +47,14 @@ func run() error {
 	}
 	defer browserMgr.Shutdown()
 
-	snapshotStore := watch.NewStore(cfg.MaxSnapshotsPerSession)
+	snapshotStore := watch.NewStore(cfg.MaxSnapshotsPerSession, log)
 	liveHub := watch.NewHub(browserMgr, watch.HubOptions{
 		Interval: cfg.LiveInterval,
 		Quality:  cfg.LiveQuality,
 		Logger:   log,
 	})
+
+	go startMetricsLogger(log, snapshotStore, browserMgr)
 
 	mcpSrv := server.NewMCPServer("mcp-browser", "1.0.0",
 		server.WithLogging(),
@@ -91,4 +95,47 @@ func run() error {
 	}
 	log.Info("server stopped")
 	return nil
+}
+
+// metricsInterval controls how often the periodic diagnostics line is emitted.
+const metricsInterval = 60 * time.Second
+
+// startMetricsLogger emits a periodic line with memory usage, goroutine count,
+// and in-process state so slow growth (e.g. toward an OOM) is visible in the
+// logs instead of surfacing only as a silent container kill.
+func startMetricsLogger(log *slog.Logger, snapshotStore *watch.Store, browserMgr *browser.BrowserManager) {
+	ticker := time.NewTicker(metricsInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		var mem runtime.MemStats
+		runtime.ReadMemStats(&mem)
+		sessions, snapBytes := snapshotStore.Stats()
+		log.Info("metrics",
+			"heap_alloc_mb", mem.Alloc/1024/1024,
+			"heap_inuse_mb", mem.HeapInuse/1024/1024,
+			"rss_mb", rssMB(),
+			"goroutines", runtime.NumGoroutine(),
+			"snapshot_sessions", sessions,
+			"snapshot_bytes_mb", snapBytes/1024/1024,
+			"browser_pages", len(browserMgr.Sessions()),
+		)
+	}
+}
+
+// rssMB returns the process resident set size in MiB on Linux, reading
+// /proc/self/statm (pages resident x page size). Returns 0 elsewhere.
+func rssMB() int64 {
+	data, err := os.ReadFile("/proc/self/statm")
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 2 {
+		return 0
+	}
+	var rssPages int64
+	if _, err := fmt.Sscanf(fields[1], "%d", &rssPages); err != nil {
+		return 0
+	}
+	return rssPages * int64(os.Getpagesize()) / 1024 / 1024
 }

@@ -130,9 +130,10 @@ func (h *LiveHub) startStreamer(sessionID string) {
 	trigger := make(chan struct{}, 1)
 	h.stop[sessionID] = stop
 	h.trigger[sessionID] = trigger
+	subscribers := len(h.subs[sessionID])
 	h.mu.Unlock()
 
-	h.logger.Info("live stream started", "session", sessionID)
+	h.logger.Info("live stream started", "session", sessionID, "subscribers", subscribers)
 	go h.streamLoop(sessionID, stop, trigger)
 }
 
@@ -169,6 +170,7 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 			}
 			if time.Since(missingSince) >= 5*time.Second {
 				h.broadcast(sessionID, &LiveFrame{SessionID: sessionID, Type: "idle", Timestamp: time.Now()})
+				h.logger.Warn("live stream ended: no browser page for session", "session", sessionID)
 				return
 			}
 			select {

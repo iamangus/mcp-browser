@@ -117,6 +117,7 @@ func handleLive(hub *LiveHub) http.HandlerFunc {
 
 		sessionID := chi.URLParam(r, "sessionId")
 		if !hub.HasPage(sessionID) {
+			hub.logger.Warn("live stream rejected: no browser page for session", "session", sessionID, "remote", r.RemoteAddr)
 			http.Error(w, `{"error":"browser session is no longer active"}`, http.StatusGone)
 			return
 		}

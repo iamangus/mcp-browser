@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -29,18 +30,23 @@ type Store struct {
 	snapshots     map[string][]*Snapshot
 	maxPerSession int
 	totalBytes    int
+	logger        *slog.Logger
 	subscribers   map[chan *Snapshot]struct{}
 }
 
 const maxTotalBytes = 256 * 1024 * 1024
 
-func NewStore(maxPerSession int) *Store {
+func NewStore(maxPerSession int, logger *slog.Logger) *Store {
 	if maxPerSession < 1 {
 		maxPerSession = 50
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	return &Store{
 		snapshots:     make(map[string][]*Snapshot),
 		maxPerSession: maxPerSession,
+		logger:        logger,
 		subscribers:   make(map[chan *Snapshot]struct{}),
 	}
 }
@@ -55,9 +61,18 @@ func (s *Store) Save(snapshot *Snapshot) {
 		hist = hist[len(hist)-s.maxPerSession:]
 	}
 	s.snapshots[snapshot.SessionID] = hist
-	s.evictOldestLocked()
+	evicted := s.evictOldestLocked()
+	total := s.totalBytes
+	sessions := len(s.snapshots)
 	s.mu.Unlock()
 
+	if evicted > 0 {
+		s.logger.Warn("snapshot store evicted oldest entries",
+			"evicted", evicted,
+			"total_bytes", total,
+			"sessions", sessions,
+		)
+	}
 	s.broadcast(snapshot)
 }
 
@@ -68,7 +83,8 @@ func snapshotSize(snapshot *Snapshot) int {
 	return len(snapshot.Image)
 }
 
-func (s *Store) evictOldestLocked() {
+func (s *Store) evictOldestLocked() int {
+	evicted := 0
 	for s.totalBytes > maxTotalBytes {
 		var oldestSession string
 		var oldest time.Time
@@ -82,7 +98,7 @@ func (s *Store) evictOldestLocked() {
 			}
 		}
 		if oldestSession == "" {
-			return
+			return evicted
 		}
 		hist := s.snapshots[oldestSession]
 		s.totalBytes -= snapshotSize(hist[0])
@@ -91,7 +107,17 @@ func (s *Store) evictOldestLocked() {
 		} else {
 			s.snapshots[oldestSession] = hist[1:]
 		}
+		evicted++
 	}
+	return evicted
+}
+
+// Stats reports the number of sessions with stored snapshots and the total
+// size of stored snapshot images, for diagnostics and memory tracking.
+func (s *Store) Stats() (sessions int, totalBytes int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.snapshots), s.totalBytes
 }
 
 func (s *Store) Get(sessionID string) ([]*Snapshot, bool) {
