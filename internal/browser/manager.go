@@ -15,17 +15,17 @@ import (
 )
 
 func chromedpErrorf(format string, args ...any) {
-	if strings.Contains(format, "could not unmarshal event") && len(args) > 0 {
-		if err, ok := args[len(args)-1].(error); ok && strings.Contains(err.Error(), "unknown IPAddressSpace value") {
-			return
-		}
+	message := fmt.Sprintf(format, args...)
+	if strings.Contains(message, "could not unmarshal event") && strings.Contains(message, "unknown IPAddressSpace value") {
+		return
 	}
 	log.Printf(format, args...)
 }
 
 type PageSession struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx      context.Context
+	cancel   context.CancelFunc
+	lastUsed time.Time
 }
 
 type BrowserManager struct {
@@ -146,12 +146,14 @@ func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, err
 	m.mu.RLock()
 	if p, ok := m.pages[sessionID]; ok {
 		m.mu.RUnlock()
+		m.touchPage(sessionID)
 		return p.ctx, nil
 	}
 	m.mu.RUnlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p, ok := m.pages[sessionID]; ok {
+		p.lastUsed = time.Now()
 		return p.ctx, nil
 	}
 	if len(m.pages) >= m.cfg.MaxConcurrentPages {
@@ -166,13 +168,25 @@ func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, err
 		}
 		return nil
 	}
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(firstRun)); err != nil {
+	createCtx, createCancel := context.WithTimeout(ctx, pageCreateTimeout)
+	defer createCancel()
+	if err := chromedp.Run(createCtx, chromedp.ActionFunc(firstRun)); err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to create page: %w", err)
+		return nil, fmt.Errorf("failed to create page (timed out after %s): %w", pageCreateTimeout, err)
 	}
-	m.pages[sessionID] = &PageSession{ctx: ctx, cancel: cancel}
+	m.pages[sessionID] = &PageSession{ctx: ctx, cancel: cancel, lastUsed: time.Now()}
 	m.logger.Info("page created", "session", sessionID, "total_pages", len(m.pages))
 	return ctx, nil
+}
+
+const pageCreateTimeout = 30 * time.Second
+
+func (m *BrowserManager) touchPage(sessionID string) {
+	m.mu.Lock()
+	if p, ok := m.pages[sessionID]; ok {
+		p.lastUsed = time.Now()
+	}
+	m.mu.Unlock()
 }
 
 func (m *BrowserManager) GetPage(sessionID string) (context.Context, error) {
@@ -242,12 +256,28 @@ func (m *BrowserManager) cleanupLoop() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
+		var stale []string
+		now := time.Now()
 		m.mu.RLock()
+		idleTimeout := m.cfg.SessionTimeout
+		if idleTimeout <= 0 {
+			idleTimeout = pageIdleTimeout
+		}
+		for sessionID, p := range m.pages {
+			if now.Sub(p.lastUsed) >= idleTimeout {
+				stale = append(stale, sessionID)
+			}
+		}
 		count := len(m.pages)
 		m.mu.RUnlock()
-		m.logger.Debug("browser cleanup check", "active_pages", count)
+		for _, sessionID := range stale {
+			m.ClosePage(sessionID)
+		}
+		m.logger.Debug("browser cleanup check", "active_pages", count, "closed_stale_pages", len(stale))
 	}
 }
+
+const pageIdleTimeout = 30 * time.Minute
 
 func (m *BrowserManager) Shutdown() {
 	m.mu.Lock()

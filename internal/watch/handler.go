@@ -43,8 +43,7 @@ func handleSnapshot(store *Store) http.HandlerFunc {
 		sessionID := chi.URLParam(r, "sessionId")
 		hist, ok := store.Get(sessionID)
 		if !ok {
-			http.Error(w, `{"error":"snapshot not found"}`, http.StatusNotFound)
-			return
+			hist = []*Snapshot{}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(hist); err != nil {
@@ -117,6 +116,10 @@ func handleLive(hub *LiveHub) http.HandlerFunc {
 		}
 
 		sessionID := chi.URLParam(r, "sessionId")
+		if !hub.HasPage(sessionID) {
+			http.Error(w, `{"error":"browser session is no longer active"}`, http.StatusGone)
+			return
+		}
 		ch, unsubscribe := hub.Subscribe(sessionID)
 		defer unsubscribe()
 

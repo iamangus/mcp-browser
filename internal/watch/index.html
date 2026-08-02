@@ -180,6 +180,7 @@
       let eventsES = null;
       let lastLiveFrame = 0;
       let idleTimer = null;
+      let liveStartedAt = 0;
 
       // ---------- Home (session list) ----------
 
@@ -289,6 +290,7 @@
       function openLiveStream(sessionId) {
         closeLiveStream();
         lastLiveFrame = 0;
+        liveStartedAt = Date.now();
         liveImg.style.display = 'none';
         livePlaceholder.style.display = 'flex';
         setLiveStatus('Connecting to live stream…', 'connecting');
@@ -296,6 +298,12 @@
         liveES.onmessage = function (e) {
           let f;
           try { f = JSON.parse(e.data); } catch (_) { return; }
+          if (f && f.type === 'idle') {
+            setLiveStatus('Session inactive', 'idle');
+            livePlaceholder.textContent = 'Session inactive — the browser page is no longer available.';
+            closeLiveStream();
+            return;
+          }
           if (!f || !f.image) return;
           lastLiveFrame = Date.now();
           const mime = f.mime || 'image/jpeg';
@@ -332,6 +340,10 @@
           if (currentView !== 'live' || !currentSessionId) return;
           if (lastLiveFrame > 0 && Date.now() - lastLiveFrame > 4000) {
             setLiveStatus('Idle — no recent activity', 'idle');
+          } else if (lastLiveFrame === 0 && liveES && Date.now() - liveStartedAt > 5000) {
+            setLiveStatus('Session inactive', 'idle');
+            livePlaceholder.textContent = 'Session inactive — no live frames were received.';
+            closeLiveStream();
           }
         }, 1000);
       }
@@ -358,6 +370,10 @@
                 </div>
               </article>`;
           }).join('');
+        }).catch(function () {
+          if (currentSessionId === sessionId) {
+            shotsGrid.innerHTML = '<p class="color/o" style="--color:#6b7280;--color-o:100%;">Screenshots are temporarily unavailable.</p>';
+          }
         });
       }
 

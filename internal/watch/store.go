@@ -28,8 +28,11 @@ type Store struct {
 	mu            sync.RWMutex
 	snapshots     map[string][]*Snapshot
 	maxPerSession int
+	totalBytes    int
 	subscribers   map[chan *Snapshot]struct{}
 }
+
+const maxTotalBytes = 256 * 1024 * 1024
 
 func NewStore(maxPerSession int) *Store {
 	if maxPerSession < 1 {
@@ -46,13 +49,49 @@ func (s *Store) Save(snapshot *Snapshot) {
 	s.mu.Lock()
 	hist := s.snapshots[snapshot.SessionID]
 	hist = append(hist, snapshot)
+	s.totalBytes += snapshotSize(snapshot)
 	if len(hist) > s.maxPerSession {
+		s.totalBytes -= snapshotSize(hist[0])
 		hist = hist[len(hist)-s.maxPerSession:]
 	}
 	s.snapshots[snapshot.SessionID] = hist
+	s.evictOldestLocked()
 	s.mu.Unlock()
 
 	s.broadcast(snapshot)
+}
+
+func snapshotSize(snapshot *Snapshot) int {
+	if snapshot == nil {
+		return 0
+	}
+	return len(snapshot.Image)
+}
+
+func (s *Store) evictOldestLocked() {
+	for s.totalBytes > maxTotalBytes {
+		var oldestSession string
+		var oldest time.Time
+		for sessionID, hist := range s.snapshots {
+			if len(hist) == 0 {
+				continue
+			}
+			if oldestSession == "" || hist[0].Timestamp.Before(oldest) {
+				oldestSession = sessionID
+				oldest = hist[0].Timestamp
+			}
+		}
+		if oldestSession == "" {
+			return
+		}
+		hist := s.snapshots[oldestSession]
+		s.totalBytes -= snapshotSize(hist[0])
+		if len(hist) == 1 {
+			delete(s.snapshots, oldestSession)
+		} else {
+			s.snapshots[oldestSession] = hist[1:]
+		}
+	}
 }
 
 func (s *Store) Get(sessionID string) ([]*Snapshot, bool) {

@@ -21,6 +21,7 @@ type PageProvider interface {
 
 type LiveFrame struct {
 	SessionID string    `json:"sessionId"`
+	Type      string    `json:"type,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 	Mime      string    `json:"mime"`
 	Image     string    `json:"image"`
@@ -71,6 +72,14 @@ func (h *LiveHub) Sessions() []string {
 	return h.pages.Sessions()
 }
 
+func (h *LiveHub) HasPage(sessionID string) bool {
+	if h.pages == nil {
+		return false
+	}
+	_, ok := h.pages.LookupPage(sessionID)
+	return ok
+}
+
 // Subscribe registers a viewer for a session's live stream. The capture loop
 // starts on the first subscriber and stops when the last one leaves. The
 // returned channel yields frames; the returned function must be called to
@@ -80,7 +89,9 @@ func (h *LiveHub) Subscribe(sessionID string) (<-chan *LiveFrame, func()) {
 	if h.subs[sessionID] == nil {
 		h.subs[sessionID] = make(map[chan *LiveFrame]struct{})
 	}
-	ch := make(chan *LiveFrame, 8)
+	// Keep only one pending frame. A slow viewer must not retain a queue of
+	// base64-encoded screenshots and grow the process indefinitely.
+	ch := make(chan *LiveFrame, 1)
 	h.subs[sessionID][ch] = struct{}{}
 	start := len(h.subs[sessionID]) == 1
 	h.mu.Unlock()
@@ -149,9 +160,17 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 
 	// Re-acquire the page so the stream survives page recreation. The
 	// context is cancelled when the page closes; loop back and retry.
+	missingSince := time.Time{}
 	for {
 		pageCtx, ok := h.pages.LookupPage(sessionID)
 		if !ok {
+			if missingSince.IsZero() {
+				missingSince = time.Now()
+			}
+			if time.Since(missingSince) >= 5*time.Second {
+				h.broadcast(sessionID, &LiveFrame{SessionID: sessionID, Type: "idle", Timestamp: time.Now()})
+				return
+			}
 			select {
 			case <-stop:
 				return
@@ -159,6 +178,7 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 				continue
 			}
 		}
+		missingSince = time.Time{}
 
 		ctx, cancel := context.WithCancel(pageCtx)
 		chromedp.ListenTarget(ctx, func(ev any) {
@@ -236,6 +256,16 @@ func (h *LiveHub) broadcast(sessionID string, frame *LiveFrame) {
 		select {
 		case ch <- frame:
 		default:
+			// Replace a stale frame with the newest one without growing the
+			// channel or blocking the capture loop.
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- frame:
+			default:
+			}
 		}
 	}
 }
