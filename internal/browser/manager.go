@@ -193,13 +193,6 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 		chromedp.Flag("mute-audio", true),
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("disable-component-update", true),
-		// Disable the disk cache via size rather than pointing it at /dev/null:
-		// Chromium tries to create the cache directory structure under the
-		// cache-dir path and floods stderr with "Unable to delete cache folder"
-		// errors when that path is a device, drowning the crash diagnostics we
-		// capture from stderr.
-		chromedp.Flag("disk-cache-size", 0),
-		chromedp.Flag("media-cache-size", 0),
 		chromedp.Flag("enable-logging", "stderr"),
 		chromedp.WindowSize(m.cfg.ScreenshotWidth, m.cfg.ScreenshotHeight),
 		chromedp.Flag("enable-automation", false),
