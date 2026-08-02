@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/angoo/mcp-browser/internal/watch"
 	"github.com/chromedp/chromedp"
@@ -58,6 +59,12 @@ func screenshotHandler(defaultQuality int, store *watch.Store) func(ctx context.
 			err = runWithTimeout(pageCtx, timeout, chromedp.FullScreenshot(&buf, quality))
 		} else {
 			err = runWithTimeout(pageCtx, timeout, chromedp.Screenshot(`body`, &buf, chromedp.ByQuery))
+			if err != nil && strings.Contains(err.Error(), "0 height") {
+				// The body's layout box is briefly 0-sized right after a
+				// navigation; fall back to a viewport capture, which does not
+				// depend on element geometry.
+				err = runWithTimeout(pageCtx, timeout, chromedp.CaptureScreenshot(&buf))
+			}
 		}
 		if err != nil {
 			if isTimeoutError(err) && selector != "" {

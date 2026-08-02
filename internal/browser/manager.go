@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/angoo/mcp-browser/internal/config"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -376,7 +377,13 @@ func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, err
 	// session keeps isolated cookies/storage. Deriving from m.allocCtx instead
 	// would launch an entire new Chromium process per session.
 	ctx, cancel := chromedp.NewContext(m.browserCtx, chromedp.WithNewBrowserContext())
+	// Register the dialog/crash listeners before the first Run so no dialog
+	// can open unnoticed and wedge the tab's renderer.
+	installDialogHandler(ctx, sessionID, m.logger)
 	firstRun := func(ctx context.Context) error {
+		if err := page.Enable().Do(ctx); err != nil {
+			return err
+		}
 		if m.cfg.Stealth {
 			if err := installStealthScript(ctx); err != nil {
 				return err
