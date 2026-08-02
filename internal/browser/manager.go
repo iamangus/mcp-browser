@@ -38,6 +38,7 @@ type BrowserManager struct {
 	pages       map[string]*PageSession
 	startedAt   time.Time
 	stopping    bool
+	chromiumOut *chromiumOutput
 }
 
 func NewManager(cfg *config.Config, logger *slog.Logger) *BrowserManager {
@@ -50,6 +51,7 @@ func NewManager(cfg *config.Config, logger *slog.Logger) *BrowserManager {
 
 func (m *BrowserManager) Start() error {
 	chromiumOut := newChromiumOutput(m.logger)
+	m.chromiumOut = chromiumOut
 	m.allocCtx, m.allocCancel = chromedp.NewExecAllocator(context.Background(), append(m.execAllocatorOptions(),
 		chromedp.CombinedOutput(chromiumOut))...)
 	ctx, cancel := chromedp.NewContext(m.allocCtx, chromedp.WithErrorf(chromedpErrorf))
@@ -71,7 +73,7 @@ func (m *BrowserManager) Start() error {
 	)
 	m.logGPUInfo(ctx)
 	go m.watchBrowserExit(chromiumOut)
-	go m.cleanupLoop()
+	go m.cleanupLoop(chromiumOut)
 	return nil
 }
 
@@ -231,10 +233,14 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 
 // gpuAccelOptions enables hardware acceleration on the host GPU (ANGLE over
 // Vulkan) plus VA-API video decode for Chromium's GPU process.
+// --enable-unsafe-swiftshader lets ANGLE fall back to software rendering when
+// Vulkan initialization fails (e.g. a containerized ICD problem), so the GPU
+// process degrades instead of dying and taking the renderers with it.
 func gpuAccelOptions() []chromedp.ExecAllocatorOption {
 	return []chromedp.ExecAllocatorOption{
 		chromedp.Flag("use-gl", "angle"),
 		chromedp.Flag("use-angle", "vulkan"),
+		chromedp.Flag("enable-unsafe-swiftshader", true),
 		chromedp.Flag("enable-features", "Vulkan,UseSkiaRenderer,DefaultANGLEVulkan,VulkanFromANGLE,VaapiVideoDecoder,VaapiVideoIgnoreDriverChecks"),
 		chromedp.Flag("ignore-gpu-blocklist", true),
 		chromedp.Flag("enable-gpu-rasterization", true),
@@ -379,7 +385,7 @@ func (m *BrowserManager) Stats() map[string]any {
 // renderer) so a dead tab cannot linger as a phantom "live" session while
 // retaining its per-target memory, and closes pages that have been idle past
 // the session timeout.
-func (m *BrowserManager) cleanupLoop() {
+func (m *BrowserManager) cleanupLoop(chromiumOut *chromiumOutput) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -402,7 +408,11 @@ func (m *BrowserManager) cleanupLoop() {
 		count := len(m.pages)
 		m.mu.RUnlock()
 		for _, sessionID := range dead {
-			m.logger.Warn("closing dead browser page", "session", sessionID)
+			attrs := []any{"session", sessionID}
+			if tail := chromiumOut.Tail(); tail != "" {
+				attrs = append(attrs, "chromium_stderr_tail", tail)
+			}
+			m.logger.Warn("closing dead browser page", attrs...)
 			m.ClosePage(sessionID)
 		}
 		for _, sessionID := range stale {

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/chromedp/chromedp"
@@ -26,6 +27,14 @@ func navigateHandler() func(ctx context.Context, request mcp.CallToolRequest) (*
 			chromedp.Evaluate(`window.location.href`, &finalURL),
 		)
 		if err != nil {
+			// The middleware only logs the tool error when the handler returns
+			// a non-nil error; here the failure is folded into the result, so
+			// surface the real cause (e.g. a dead renderer target) ourselves.
+			slog.Warn("navigation failed",
+				"session", getSessionID(ctx),
+				"url", rawURL,
+				"error", err,
+			)
 			return mcpErrorResult(fmt.Sprintf("navigation failed: %v", err)), nil
 		}
 		return &mcp.CallToolResult{
