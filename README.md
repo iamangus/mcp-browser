@@ -152,14 +152,14 @@ Notes:
   starts a virtual display (`Xvfb`) plus a system/session D-Bus (headed Chromium
   stalls without one) and runs the browser headed at
   `XVFB_SCREEN=1280x720x24`.
-- **Hardware acceleration is automatic when a GPU is exposed.** Software
-  rendering (SwiftShader) is fragile and memory-hungry for heavy sites and can
-  crash renderers mid-challenge. In Kubernetes, if the pod requests a GPU
-  device (e.g. `gpu.intel.com/i915` from the Intel device plugin), the container
-  receives `/dev/dri/renderD128` and the server detects it and launches Chromium
-  with hardware ANGLE/Vulkan + VA-API flags instead of SwiftShader, falling back
-  automatically if Vulkan initialization fails. The image ships the Intel
-  userspace drivers (`mesa-vulkan-intel`, `intel-media-driver`).
+- **Headed mode renders in software (SwiftShader).** Under a virtual display
+  (Xvfb) there is no DRI3 extension, which Chromium's GPU process needs to
+  present frames, so hardware acceleration is impossible regardless of any GPU
+  exposed to the container. Headed mode therefore always uses SwiftShader
+  software rendering, which is what gets a real page composited instead of the
+  GPU process failing to initialize and taking the renderer with it. This means
+  the container image does not ship Intel GPU userspace drivers and the pod
+  does not need a GPU device resource.
 - **IP reputation matters.** The browser may be clean but Cloudflare also scores
   the TLS/JA3 and egress IP. On a residential IP these changes usually resolve
   interactive challenges; on a flagged datacenter IP you will keep getting them

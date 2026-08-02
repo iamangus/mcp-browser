@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -69,7 +68,6 @@ func (m *BrowserManager) Start() error {
 		"chromium_path", m.cfg.ChromiumPath,
 		"headless", m.cfg.Headless,
 		"stealth", m.cfg.Stealth,
-		"gpu_render_node", renderNodeAvailable(),
 	)
 	m.logGPUInfo(ctx)
 	go m.watchBrowserExit(chromiumOut)
@@ -82,11 +80,12 @@ func (m *BrowserManager) Start() error {
 const browserStartTimeout = 60 * time.Second
 
 // logGPUInfo inspects the compositor's WebGL renderer string so we can see
-// whether hardware acceleration actually engaged (e.g. "ANGLE (Intel, ...,
-// Vulkan 1.3.0 (Intel ...))" on the iGPU) or silently fell back to software
-// (e.g. "ANGLE (..., SwiftShader Device)"). The SystemInfo CDP domain is
-// browser-target-only and not reachable from chromedp's page context, so we
-// read the renderer string from a page instead.
+// which renderer is in use at startup. In headed mode under a virtual display
+// this should be SwiftShader ("accel: software"); a different or empty renderer
+// means rendering is not engaged as expected and points at a compositor or GPU
+// process problem. The SystemInfo CDP domain is browser-target-only and not
+// reachable from chromedp's page context, so we read the renderer string from a
+// page instead.
 func (m *BrowserManager) logGPUInfo(ctx context.Context) {
 	infoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -194,7 +193,13 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 		chromedp.Flag("mute-audio", true),
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("disable-component-update", true),
-		chromedp.Flag("disk-cache-dir", "/dev/null"),
+		// Disable the disk cache via size rather than pointing it at /dev/null:
+		// Chromium tries to create the cache directory structure under the
+		// cache-dir path and floods stderr with "Unable to delete cache folder"
+		// errors when that path is a device, drowning the crash diagnostics we
+		// capture from stderr.
+		chromedp.Flag("disk-cache-size", 0),
+		chromedp.Flag("media-cache-size", 0),
 		chromedp.Flag("enable-logging", "stderr"),
 		chromedp.WindowSize(m.cfg.ScreenshotWidth, m.cfg.ScreenshotHeight),
 		chromedp.Flag("enable-automation", false),
@@ -215,59 +220,27 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 			chromedp.Flag("disable-dev-shm-usage", true),
 		)
 	} else {
-		// Headed mode under a virtual display (Xvfb). When a GPU render node is
-		// exposed to the container (e.g. an Intel iGPU via the Kubernetes
-		// device plugin's gpu.intel.com/i915 resource) composite on the real
-		// GPU through ANGLE/Vulkan; otherwise force SwiftShader software
-		// rendering so the GPU process does not crash-loop through Vulkan/EGL
-		// init and stall startup. Chromium falls back to SwiftShader on its own
-		// if Vulkan initialization fails, so the GPU path degrades safely.
-		if renderNodeAvailable() {
-			opts = append(opts, gpuAccelOptions()...)
-		} else {
-			opts = append(opts, softwareGLFlags()...)
-		}
+		// Headed mode under a virtual display (Xvfb). Xvfb is a software
+		// framebuffer with no DRI3 extension, which Chromium's GPU process
+		// requires to present frames, so hardware acceleration is impossible
+		// here — always render with SwiftShader software. This is what
+		// ultimately gets a real page composited instead of the GPU process
+		// failing to initialize a Vulkan surface and taking the renderer with
+		// it.
+		opts = append(opts, softwareGLFlags()...)
 	}
 	return opts
 }
 
-// gpuAccelOptions enables hardware acceleration on the host GPU (ANGLE over
-// Vulkan) plus VA-API video decode for Chromium's GPU process.
-// --enable-unsafe-swiftshader lets ANGLE fall back to software rendering when
-// Vulkan initialization fails (e.g. a containerized ICD problem), so the GPU
-// process degrades instead of dying and taking the renderers with it.
-func gpuAccelOptions() []chromedp.ExecAllocatorOption {
-	return []chromedp.ExecAllocatorOption{
-		chromedp.Flag("use-gl", "angle"),
-		chromedp.Flag("use-angle", "vulkan"),
-		chromedp.Flag("enable-unsafe-swiftshader", true),
-		chromedp.Flag("enable-features", "Vulkan,UseSkiaRenderer,DefaultANGLEVulkan,VulkanFromANGLE,VaapiVideoDecoder,VaapiVideoIgnoreDriverChecks"),
-		chromedp.Flag("ignore-gpu-blocklist", true),
-		chromedp.Flag("enable-gpu-rasterization", true),
-		chromedp.Flag("enable-zero-copy", true),
-	}
-}
-
-// softwareGLFlags forces SwiftShader software rendering in headed mode when no
-// GPU render node is available.
+// softwareGLFlags forces SwiftShader software rendering, which is the only
+// viable path under a virtual display: Xvfb has no DRI3 so the GPU process
+// cannot present, and SwiftShader does not need it.
 func softwareGLFlags() []chromedp.ExecAllocatorOption {
 	return []chromedp.ExecAllocatorOption{
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("use-angle", "swiftshader"),
 		chromedp.Flag("enable-unsafe-swiftshader", true),
 	}
-}
-
-// renderNodeAvailable reports whether a GPU render node is exposed to the
-// container under /dev/dri (e.g. via the Intel GPU device plugin's
-// gpu.intel.com/i915 resource).
-func renderNodeAvailable() bool {
-	for _, path := range []string{"/dev/dri/renderD128", "/dev/dri/card0"} {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, error) {
