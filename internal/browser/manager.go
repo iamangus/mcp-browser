@@ -41,8 +41,8 @@ type BrowserManager struct {
 	browserCancel context.CancelFunc
 	mu            sync.RWMutex
 	pages         map[string]*PageSession
-	busyMu        sync.RWMutex
-	busy          map[string]bool
+	leaseMu       sync.Mutex
+	leases        map[string]*pageLease
 	startedAt     time.Time
 	stopping      bool
 	chromiumOut   *chromiumOutput
@@ -53,28 +53,94 @@ func NewManager(cfg *config.Config, logger *slog.Logger) *BrowserManager {
 		cfg:    cfg,
 		logger: logger,
 		pages:  make(map[string]*PageSession),
-		busy:   make(map[string]bool),
+		leases: make(map[string]*pageLease),
 	}
 }
 
-// SetPageBusy records whether a tool call is currently using the session's
-// page. The live streamer consults this to pause its screenshot loop while a
-// tool (especially a navigation) is in flight, so capturing cannot starve the
-// navigation of the renderer.
-func (m *BrowserManager) SetPageBusy(sessionID string, busy bool) {
-	m.busyMu.Lock()
-	defer m.busyMu.Unlock()
-	if busy {
-		m.busy[sessionID] = true
-	} else {
-		delete(m.busy, sessionID)
+// pageLease serializes access to a session's page between tool calls and the
+// live capture streamer. sem holds a single permit: a tool call takes it for
+// the whole tool execution, and the live streamer takes it only for a single
+// screenshot. waiters counts tool calls blocked waiting for the permit so the
+// streamer yields to them instead of racing for the token.
+type pageLease struct {
+	mu      sync.Mutex
+	sem     chan struct{}
+	waiters int
+}
+
+func newPageLease() *pageLease {
+	l := &pageLease{sem: make(chan struct{}, 1)}
+	l.sem <- struct{}{}
+	return l
+}
+
+func (m *BrowserManager) getLease(sessionID string) *pageLease {
+	m.leaseMu.Lock()
+	defer m.leaseMu.Unlock()
+	l, ok := m.leases[sessionID]
+	if !ok {
+		l = newPageLease()
+		m.leases[sessionID] = l
+	}
+	return l
+}
+
+// BeginPageOp grants a tool call exclusive use of the session's page, waiting
+// until any in-flight live capture finishes. It returns a release function and
+// how long the call had to wait. The live streamer uses TryPageCapture, which
+// yields to a waiting tool, so the wait is bounded by one capture.
+func (m *BrowserManager) BeginPageOp(ctx context.Context, sessionID string) (release func(), wait time.Duration, err error) {
+	l := m.getLease(sessionID)
+	l.mu.Lock()
+	l.waiters++
+	l.mu.Unlock()
+	start := time.Now()
+	select {
+	case <-l.sem:
+		l.mu.Lock()
+		l.waiters--
+		l.mu.Unlock()
+		return func() { l.sem <- struct{}{} }, time.Since(start), nil
+	case <-ctx.Done():
+		l.mu.Lock()
+		l.waiters--
+		l.mu.Unlock()
+		return nil, time.Since(start), ctx.Err()
 	}
 }
 
-func (m *BrowserManager) IsPageBusy(sessionID string) bool {
-	m.busyMu.RLock()
-	defer m.busyMu.RUnlock()
-	return m.busy[sessionID]
+// TryPageCapture reports whether the live streamer may take a screenshot of the
+// session's page right now. It fails when a tool call holds or waits for the
+// page; toolWaiting reports which case, for diagnostics.
+func (m *BrowserManager) TryPageCapture(sessionID string) (acquired, toolWaiting bool) {
+	l := m.getLease(sessionID)
+	l.mu.Lock()
+	waiters := l.waiters
+	l.mu.Unlock()
+	if waiters > 0 {
+		return false, true
+	}
+	select {
+	case <-l.sem:
+		// A tool may have started waiting between the check above and taking
+		// the token; yield immediately so the tool is not delayed a capture.
+		l.mu.Lock()
+		waiters = l.waiters
+		l.mu.Unlock()
+		if waiters > 0 {
+			l.sem <- struct{}{}
+			return false, true
+		}
+		return true, false
+	default:
+		return false, false
+	}
+}
+
+// ReleasePageCapture returns the page to the tool-lease pool after the live
+// streamer finishes a screenshot.
+func (m *BrowserManager) ReleasePageCapture(sessionID string) {
+	m.getLease(sessionID).sem <- struct{}{}
 }
 
 func (m *BrowserManager) Start() error {
@@ -387,9 +453,6 @@ func (m *BrowserManager) ClosePage(sessionID string) {
 		m.logger.Info("page closed", "session", sessionID, "total_pages", len(m.pages))
 	}
 	m.mu.Unlock()
-	// A closed page can never be busy: clear any stale busy flag so the live
-	// streamer is not held back by a session that no longer exists.
-	m.SetPageBusy(sessionID, false)
 }
 
 func (m *BrowserManager) IsHealthy() bool {

@@ -18,10 +18,13 @@ import (
 type PageProvider interface {
 	LookupPage(sessionID string) (context.Context, bool)
 	Sessions() []string
-	// IsPageBusy reports whether a tool call is currently using the session's
-	// page. The live streamer skips captures while a tool is in flight so its
-	// screenshot commands cannot contend with (and starve) navigation.
-	IsPageBusy(sessionID string) bool
+	// TryPageCapture grants the streamer a single screenshot permit for the
+	// session's page, failing when a tool call holds or waits for the page so a
+	// navigation cannot be starved of the renderer. toolWaiting reports whether
+	// a tool is blocked waiting, for diagnostics.
+	TryPageCapture(sessionID string) (acquired, toolWaiting bool)
+	// ReleasePageCapture returns the permit after the screenshot completes.
+	ReleasePageCapture(sessionID string)
 }
 
 type LiveFrame struct {
@@ -181,6 +184,10 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 	statsSince := time.Now()
 	statsFrames := 0
 	statsBytes := int64(0)
+	statsBusySkips := 0
+	statsCaptureFailures := 0
+	statsCaptureTotal := time.Duration(0)
+	statsCaptureMax := time.Duration(0)
 	logStats := func(now time.Time) {
 		if statsFrames == 0 {
 			statsSince = now
@@ -195,26 +202,44 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 			"frames", statsFrames,
 			"bytes_kb", statsBytes/1024,
 			"fps", round2(float64(statsFrames)/elapsed),
+			"busy_skips", statsBusySkips,
+			"capture_failures", statsCaptureFailures,
+			"avg_capture_ms", round2(float64(statsCaptureTotal/time.Millisecond)/float64(statsFrames)),
+			"max_capture_ms", round2(float64(statsCaptureMax/time.Millisecond)),
 		)
 		statsSince = now
 		statsFrames = 0
 		statsBytes = 0
+		statsBusySkips = 0
+		statsCaptureFailures = 0
+		statsCaptureTotal = 0
+		statsCaptureMax = 0
 	}
 
 	// captureAndTrack takes one screenshot and records the result. It returns
 	// the delay before the next capture attempt and ok=false when the streamer
 	// should stop (page gone or too many failures).
 	//
-	// While a tool call is using the page (e.g. a navigation), captures are
-	// skipped entirely so they cannot contend with it, and after a failure the
-	// next attempt is backed off because a timed-out Go context does not cancel
-	// the screenshot command already executing inside Chromium.
+	// The screenshot permit comes from the page lease, so a capture is skipped
+	// entirely while a tool call holds or waits for the page (e.g. during a
+	// navigation); a timed-out Go context does not cancel the screenshot
+	// command already executing inside Chromium, so captures never contend with
+	// a tool. After a failure the next attempt is backed off.
 	captureAndTrack := func(ctx context.Context, cancel context.CancelFunc) (time.Duration, bool) {
-		if h.pages != nil && h.pages.IsPageBusy(sessionID) {
-			return h.interval, true
+		if h.pages != nil {
+			acquired, toolWaiting := h.pages.TryPageCapture(sessionID)
+			if !acquired {
+				statsBusySkips++
+				h.logger.Debug("live capture skipped", "session", sessionID, "tool_waiting", toolWaiting)
+				return h.interval, true
+			}
+			defer h.pages.ReleasePageCapture(sessionID)
 		}
+		captureStart := time.Now()
 		n, err := h.capture(ctx, sessionID)
+		captureDur := time.Since(captureStart)
 		if err != nil {
+			statsCaptureFailures++
 			if errors.Is(err, context.Canceled) {
 				// A canceled page context means the tab's target was destroyed
 				// (e.g. the renderer crashed). Count it toward the failure
@@ -229,6 +254,7 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 					"session", sessionID,
 					"error", err,
 					"consecutive_failures", failures,
+					"capture_ms", round2(float64(captureDur/time.Millisecond)),
 				)
 			}
 			if failures >= maxConsecutiveCaptureFailures {
@@ -252,6 +278,10 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 		failures = 0
 		statsFrames++
 		statsBytes += int64(n)
+		statsCaptureTotal += captureDur
+		if captureDur > statsCaptureMax {
+			statsCaptureMax = captureDur
+		}
 		if time.Since(statsSince) >= liveStatsInterval {
 			logStats(time.Now())
 		}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -9,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -117,7 +115,6 @@ func startMetricsLogger(log *slog.Logger, snapshotStore *watch.Store, browserMgr
 			"heap_inuse_mb", mem.HeapInuse/1024/1024,
 			"rss_mb", rssMB(),
 			"container_mem_mb", containerMemMB(),
-			"chromium_rss_mb", chromiumTreeRSSMB(),
 			"goroutines", runtime.NumGoroutine(),
 			"snapshot_sessions", sessions,
 			"snapshot_bytes_mb", snapBytes/1024/1024,
@@ -162,45 +159,4 @@ func containerMemMB() int64 {
 		}
 	}
 	return 0
-}
-
-// chromiumTreeRSSMB returns the combined resident set size in MiB of every
-// process in the container whose command line contains "chromium". The Go
-// server's own rssMB() does not reflect the browser subprocesses, which are
-// usually the dominant memory consumers in headed mode.
-func chromiumTreeRSSMB() int64 {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return 0
-	}
-	var total int64
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := strconv.Atoi(e.Name()); err != nil {
-			continue
-		}
-		cmd, err := os.ReadFile("/proc/" + e.Name() + "/cmdline")
-		if err != nil {
-			continue
-		}
-		if !bytes.Contains(cmd, []byte("chromium")) {
-			continue
-		}
-		data, err := os.ReadFile("/proc/" + e.Name() + "/statm")
-		if err != nil {
-			continue
-		}
-		fields := strings.Fields(string(data))
-		if len(fields) < 2 {
-			continue
-		}
-		var rssPages int64
-		if _, err := fmt.Sscanf(fields[1], "%d", &rssPages); err != nil {
-			continue
-		}
-		total += rssPages * int64(os.Getpagesize())
-	}
-	return total / 1024 / 1024
 }
