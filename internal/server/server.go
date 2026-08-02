@@ -19,14 +19,17 @@ type Server struct {
 	logger     *slog.Logger
 	mcpHandler http.Handler
 	watchStore *watch.Store
+	liveHub    *watch.LiveHub
+	watchRoute http.Handler
 }
 
-func New(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler, watchStore *watch.Store) *Server {
+func New(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler, watchStore *watch.Store, liveHub *watch.LiveHub) *Server {
 	s := &Server{
 		cfg:        cfg,
 		logger:     logger,
 		mcpHandler: mcpHandler,
 		watchStore: watchStore,
+		liveHub:    liveHub,
 	}
 	s.router = chi.NewRouter()
 	s.setupMiddleware()
@@ -62,14 +65,14 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/", s.handleIndex)
 	if s.watchStore != nil {
 		auth := middleware.NewAuth(s.cfg.APIKey, s.logger)
-		watchHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.watchRoute = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Del("Content-Security-Policy")
-			watch.Handler(s.watchStore).ServeHTTP(w, r)
+			watch.Handler(s.watchStore, s.liveHub).ServeHTTP(w, r)
 		})
 		if s.cfg.DisableAuth {
-			s.router.Mount("/watch", watchHandler)
+			s.router.Mount("/watch", s.watchRoute)
 		} else {
-			s.router.With(auth.RequireAuth).Mount("/watch", watchHandler)
+			s.router.With(auth.RequireAuthWithQuery).Mount("/watch", s.watchRoute)
 		}
 	}
 }

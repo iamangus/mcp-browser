@@ -45,7 +45,12 @@ func run() error {
 	}
 	defer browserMgr.Shutdown()
 
-	snapshotStore := watch.NewStore()
+	snapshotStore := watch.NewStore(cfg.MaxSnapshotsPerSession)
+	liveHub := watch.NewHub(browserMgr, watch.HubOptions{
+		Interval: cfg.LiveInterval,
+		Quality:  cfg.LiveQuality,
+		Logger:   log,
+	})
 
 	mcpSrv := server.NewMCPServer("mcp-browser", "1.0.0",
 		server.WithLogging(),
@@ -60,7 +65,7 @@ func run() error {
 		server.WithEndpointPath("/"),
 	)
 
-	srv := appserver.New(cfg, log, mcpHTTP, snapshotStore)
+	srv := appserver.New(cfg, log, mcpHTTP, snapshotStore, liveHub)
 	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
 	httpServer := &http.Server{
 		Addr:         addr,

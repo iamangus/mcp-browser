@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -112,6 +113,30 @@ func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, err
 
 func (m *BrowserManager) GetPage(sessionID string) (context.Context, error) {
 	return m.GetOrCreatePage(sessionID)
+}
+
+// LookupPage returns an existing page context for the session without creating
+// a new one. It is used by the live streamer so that opening the watch UI does
+// not spawn browser pages for sessions that have no browser activity.
+func (m *BrowserManager) LookupPage(sessionID string) (context.Context, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.pages[sessionID]
+	if !ok {
+		return nil, false
+	}
+	return p.ctx, true
+}
+
+func (m *BrowserManager) Sessions() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]string, 0, len(m.pages))
+	for id := range m.pages {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (m *BrowserManager) ClosePage(sessionID string) {

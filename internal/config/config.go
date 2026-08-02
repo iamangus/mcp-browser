@@ -9,44 +9,50 @@ import (
 )
 
 type Config struct {
-	Port               string
-	Host               string
-	LogLevel           string
-	APIKey             string
-	BrowserTimeout     time.Duration
-	SessionTimeout     time.Duration
-	MaxConcurrentPages int
-	RateLimitWindow    time.Duration
-	RateLimitMax       int
-	ScreenshotQuality  int
-	ScreenshotWidth    int
-	ScreenshotHeight   int
-	CorsOrigin         string
-	ChromiumPath       string
-	Headless           bool
-	NoSandbox          bool
-	DisableAuth        bool
+	Port                   string
+	Host                   string
+	LogLevel               string
+	APIKey                 string
+	BrowserTimeout         time.Duration
+	SessionTimeout         time.Duration
+	MaxConcurrentPages     int
+	RateLimitWindow        time.Duration
+	RateLimitMax           int
+	ScreenshotQuality      int
+	ScreenshotWidth        int
+	ScreenshotHeight       int
+	LiveInterval           time.Duration
+	LiveQuality            int
+	MaxSnapshotsPerSession int
+	CorsOrigin             string
+	ChromiumPath           string
+	Headless               bool
+	NoSandbox              bool
+	DisableAuth            bool
 }
 
 func Load() (*Config, error) {
 	c := &Config{
-		Port:               getEnv("PORT", "3000"),
-		Host:               getEnv("HOST", "0.0.0.0"),
-		LogLevel:           getEnv("LOG_LEVEL", "info"),
-		APIKey:             getEnv("API_KEY", "test-api-key-12345"),
-		BrowserTimeout:     getDurationEnv("BROWSER_TIMEOUT", 30*time.Second),
-		SessionTimeout:     getDurationEnv("SESSION_TIMEOUT", 30*time.Minute),
-		MaxConcurrentPages: getIntEnv("MAX_CONCURRENT_PAGES", 10),
-		RateLimitWindow:    getDurationEnv("RATE_LIMIT_WINDOW", 15*time.Minute),
-		RateLimitMax:       getIntEnv("RATE_LIMIT_MAX", 100),
-		ScreenshotQuality:  getIntEnv("SCREENSHOT_QUALITY", 80),
-		ScreenshotWidth:    getIntEnv("SCREENSHOT_DEFAULT_WIDTH", 1280),
-		ScreenshotHeight:   getIntEnv("SCREENSHOT_DEFAULT_HEIGHT", 720),
-		CorsOrigin:         getEnv("CORS_ORIGIN", "*"),
-		ChromiumPath:       getEnv("CHROMIUM_PATH", ""),
-		Headless:           getBoolEnv("HEADLESS", true),
-		NoSandbox:          getBoolEnv("NO_SANDBOX", true),
-		DisableAuth:        getBoolEnv("DISABLE_AUTH", false),
+		Port:                   getEnv("PORT", "3000"),
+		Host:                   getEnv("HOST", "0.0.0.0"),
+		LogLevel:               getEnv("LOG_LEVEL", "info"),
+		APIKey:                 getEnv("API_KEY", "test-api-key-12345"),
+		BrowserTimeout:         getDurationEnv("BROWSER_TIMEOUT", 30*time.Second),
+		SessionTimeout:         getDurationEnv("SESSION_TIMEOUT", 30*time.Minute),
+		MaxConcurrentPages:     getIntEnv("MAX_CONCURRENT_PAGES", 10),
+		RateLimitWindow:        getDurationEnv("RATE_LIMIT_WINDOW", 15*time.Minute),
+		RateLimitMax:           getIntEnv("RATE_LIMIT_MAX", 100),
+		ScreenshotQuality:      getIntEnv("SCREENSHOT_QUALITY", 80),
+		ScreenshotWidth:        getIntEnv("SCREENSHOT_DEFAULT_WIDTH", 1280),
+		ScreenshotHeight:       getIntEnv("SCREENSHOT_DEFAULT_HEIGHT", 720),
+		LiveInterval:           getDurationEnv("LIVE_INTERVAL", 400*time.Millisecond),
+		LiveQuality:            getIntEnv("LIVE_QUALITY", 60),
+		MaxSnapshotsPerSession: getIntEnv("MAX_SNAPSHOTS_PER_SESSION", 50),
+		CorsOrigin:             getEnv("CORS_ORIGIN", "*"),
+		ChromiumPath:           getEnv("CHROMIUM_PATH", ""),
+		Headless:               getBoolEnv("HEADLESS", true),
+		NoSandbox:              getBoolEnv("NO_SANDBOX", true),
+		DisableAuth:            getBoolEnv("DISABLE_AUTH", false),
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -73,6 +79,15 @@ func (c *Config) Validate() error {
 	}
 	if c.MaxConcurrentPages < 1 {
 		return fmt.Errorf("MAX_CONCURRENT_PAGES must be at least 1")
+	}
+	if c.LiveInterval <= 0 {
+		return fmt.Errorf("LIVE_INTERVAL must be positive")
+	}
+	if c.LiveQuality < 1 || c.LiveQuality > 100 {
+		return fmt.Errorf("LIVE_QUALITY must be between 1 and 100")
+	}
+	if c.MaxSnapshotsPerSession < 1 {
+		return fmt.Errorf("MAX_SNAPSHOTS_PER_SESSION must be at least 1")
 	}
 	return nil
 }

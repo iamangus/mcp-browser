@@ -32,6 +32,28 @@ func (a *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// RequireAuthWithQuery is like RequireAuth but also accepts the API key via a
+// query parameter. It is intended only for browser-facing routes (e.g. the
+// /watch UI) where EventSource cannot set Authorization headers. The MCP
+// endpoint must keep using RequireAuth.
+func (a *AuthMiddleware) RequireAuthWithQuery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := extractBearerToken(r)
+		if key == "" {
+			key = r.URL.Query().Get("api_key")
+		}
+		if key == "" {
+			a.sendUnauthorized(w, "missing authorization")
+			return
+		}
+		if !constantTimeEqual(a.apiKey, key) {
+			a.sendUnauthorized(w, "invalid API key")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func extractBearerToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {

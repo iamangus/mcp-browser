@@ -42,6 +42,9 @@ All config is via environment variables. See [.env.example](.env.example) for de
 | `RATE_LIMIT_MAX` | `100` | Max requests per window |
 | `RATE_LIMIT_WINDOW` | `15m` | Rate limit window |
 | `CORS_ORIGIN` | `*` | Allowed CORS origin |
+| `LIVE_INTERVAL` | `400ms` | Live-view screenshot cadence |
+| `LIVE_QUALITY` | `60` | Live-view JPEG quality (1-100) |
+| `MAX_SNAPSHOTS_PER_SESSION` | `50` | Screenshot history kept per session |
 
 ## Endpoints
 
@@ -52,6 +55,30 @@ All config is via environment variables. See [.env.example](.env.example) for de
 | `POST/GET/DELETE` | `/mcp` | MCP Streamable HTTP endpoint |
 
 All `/mcp` requests require `Authorization: Bearer <API_KEY>` unless auth is disabled.
+
+### Watch UI
+
+`GET /watch` is a browser UI showing all agent sessions. Clicking a session opens a detail page with two tabs:
+
+- **Live** — a live rendering of the session's browser tab. Frames are captured while
+  at least one viewer is connected (polling at `LIVE_INTERVAL` plus immediate captures on
+  page load/navigation events) and streamed over SSE; nothing is persisted.
+- **Screenshots** — the history of explicit `browser_screenshot` calls for that session.
+
+Supporting endpoints:
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/watch` | Watch UI (HTML) |
+| `GET` | `/watch/snapshots` | Session summaries (latest frame per session) |
+| `GET` | `/watch/snapshots/{sessionId}` | Screenshot history for a session |
+| `GET` | `/watch/sessions` | Active browser sessions |
+| `GET` | `/watch/events` | SSE of new screenshots |
+| `GET` | `/watch/live/{sessionId}` | SSE live frame stream |
+
+The watch routes require auth by default. Because `EventSource` cannot set headers, the
+watch UI also accepts the API key as `?api_key=<key>` (the `/mcp` endpoint does **not**
+accept query-param keys). If auth is disabled, the key is not needed.
 
 ## Tools
 
@@ -108,6 +135,7 @@ cmd/server/main.go          Entry point, wires everything together
 internal/
   server/server.go          Chi router, middleware, route mounting
   browser/manager.go        Chromedp lifecycle, page pool per session
+  watch/                   /watch UI, snapshot store, live frame hub
   tools/                    16 MCP tool handlers + registry
   config/config.go          Env-based configuration
   middleware/               Auth, rate limiting, security headers

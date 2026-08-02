@@ -15,40 +15,70 @@ type Snapshot struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-type Store struct {
-	mu          sync.RWMutex
-	snapshots   map[string]*Snapshot
-	subscribers map[chan *Snapshot]struct{}
+type SessionSummary struct {
+	SessionID string    `json:"sessionId"`
+	URL       string    `json:"url"`
+	Title     string    `json:"title"`
+	Image     []byte    `json:"image"`
+	Timestamp time.Time `json:"timestamp"`
+	Count     int       `json:"count"`
 }
 
-func NewStore() *Store {
+type Store struct {
+	mu            sync.RWMutex
+	snapshots     map[string][]*Snapshot
+	maxPerSession int
+	subscribers   map[chan *Snapshot]struct{}
+}
+
+func NewStore(maxPerSession int) *Store {
+	if maxPerSession < 1 {
+		maxPerSession = 50
+	}
 	return &Store{
-		snapshots:   make(map[string]*Snapshot),
-		subscribers: make(map[chan *Snapshot]struct{}),
+		snapshots:     make(map[string][]*Snapshot),
+		maxPerSession: maxPerSession,
+		subscribers:   make(map[chan *Snapshot]struct{}),
 	}
 }
 
 func (s *Store) Save(snapshot *Snapshot) {
 	s.mu.Lock()
-	s.snapshots[snapshot.SessionID] = snapshot
+	hist := s.snapshots[snapshot.SessionID]
+	hist = append(hist, snapshot)
+	if len(hist) > s.maxPerSession {
+		hist = hist[len(hist)-s.maxPerSession:]
+	}
+	s.snapshots[snapshot.SessionID] = hist
 	s.mu.Unlock()
 
 	s.broadcast(snapshot)
 }
 
-func (s *Store) Get(sessionID string) (*Snapshot, bool) {
+func (s *Store) Get(sessionID string) ([]*Snapshot, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	snap, ok := s.snapshots[sessionID]
-	return snap, ok
+	hist, ok := s.snapshots[sessionID]
+	return hist, ok
 }
 
-func (s *Store) List() []*Snapshot {
+func (s *Store) List() []*SessionSummary {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]*Snapshot, 0, len(s.snapshots))
-	for _, snap := range s.snapshots {
-		out = append(out, snap)
+	out := make([]*SessionSummary, 0, len(s.snapshots))
+	for _, hist := range s.snapshots {
+		if len(hist) == 0 {
+			continue
+		}
+		last := hist[len(hist)-1]
+		out = append(out, &SessionSummary{
+			SessionID: last.SessionID,
+			URL:       last.URL,
+			Title:     last.Title,
+			Image:     last.Image,
+			Timestamp: last.Timestamp,
+			Count:     len(hist),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Timestamp.After(out[j].Timestamp)
