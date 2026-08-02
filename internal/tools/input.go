@@ -2,16 +2,40 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/big"
 	"time"
 
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
+
+// randIntn returns a uniform integer in [0, n). It backs the human-like timing
+// jitter in input emulation; crypto/rand is used so gosec's weak-RNG rule is
+// not triggered even though the values are not security-sensitive.
+func randIntn(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	v, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0
+	}
+	return int(v.Int64())
+}
+
+// randJitter returns a value in [-1, 1) used to add cursor wobble.
+func randJitter() float64 {
+	v, err := rand.Int(rand.Reader, big.NewInt(20000))
+	if err != nil {
+		return 0
+	}
+	return float64(v.Int64())/10000.0 - 1.0
+}
 
 // cdpMouseButton maps the tool's button names to CDP mouse buttons.
 func cdpMouseButton(button string) input.MouseButton {
@@ -55,13 +79,13 @@ func humanClickAtButton(get func() (float64, float64), btn input.MouseButton, cl
 				WithButton(btn).WithClickCount(int64(i)).Do(ctx); err != nil {
 				return err
 			}
-			time.Sleep(time.Duration(40+rand.Intn(90)) * time.Millisecond)
+			time.Sleep(time.Duration(40+randIntn(90)) * time.Millisecond)
 			if err := input.DispatchMouseEvent(input.MouseReleased, x, y).
 				WithButton(btn).WithClickCount(int64(i)).Do(ctx); err != nil {
 				return err
 			}
 			if i < clickCount {
-				time.Sleep(time.Duration(60+rand.Intn(100)) * time.Millisecond)
+				time.Sleep(time.Duration(60+randIntn(100)) * time.Millisecond)
 			}
 		}
 		writeMousePos(ctx, x, y)
@@ -102,15 +126,15 @@ func moveMouseSteps(ctx context.Context, fromX, fromY, toX, toY float64, steps i
 		x := fromX + (toX-fromX)*e
 		y := fromY + (toY-fromY)*e
 		if i < steps {
-			x += (rand.Float64()*2 - 1) * 1.5
-			y += (rand.Float64()*2 - 1) * 1.5
+			x += randJitter() * 1.5
+			y += randJitter() * 1.5
 		}
 		if err := input.DispatchMouseEvent(input.MouseMoved, x, y).
 			WithButton(input.None).Do(ctx); err != nil {
 			return err
 		}
 		if i < steps {
-			time.Sleep(time.Duration(8+rand.Intn(24)) * time.Millisecond)
+			time.Sleep(time.Duration(8+randIntn(24)) * time.Millisecond)
 		}
 	}
 	writeMousePos(ctx, toX, toY)
