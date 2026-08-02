@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
@@ -19,6 +18,10 @@ import (
 type PageProvider interface {
 	LookupPage(sessionID string) (context.Context, bool)
 	Sessions() []string
+	// IsPageBusy reports whether a tool call is currently using the session's
+	// page. The live streamer skips captures while a tool is in flight so its
+	// screenshot commands cannot contend with (and starve) navigation.
+	IsPageBusy(sessionID string) bool
 }
 
 type LiveFrame struct {
@@ -161,10 +164,15 @@ const maxConsecutiveCaptureFailures = 10
 const liveStatsInterval = 30 * time.Second
 
 func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan struct{}) {
-	eventCh := make(chan struct{}, 1)
-	markEvent := func() {
+	// navEvent carries page-level navigation/load events. Per-resource network
+	// events (Network.loadingFinished) are deliberately NOT watched: they fire
+	// once per resource, and on a heavy page they would flood the capture loop
+	// with back-to-back screenshot commands against a renderer that is already
+	// busy composing the page, which starves an in-flight navigation.
+	navEvent := make(chan struct{}, 1)
+	markNav := func() {
 		select {
-		case eventCh <- struct{}{}:
+		case navEvent <- struct{}{}:
 		default:
 		}
 	}
@@ -193,9 +201,18 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 		statsBytes = 0
 	}
 
-	// captureAndTrack takes one screenshot and records the result. Returns
-	// false when the streamer should stop (page gone or too many failures).
-	captureAndTrack := func(ctx context.Context, cancel context.CancelFunc, ticker *time.Ticker) bool {
+	// captureAndTrack takes one screenshot and records the result. It returns
+	// the delay before the next capture attempt and ok=false when the streamer
+	// should stop (page gone or too many failures).
+	//
+	// While a tool call is using the page (e.g. a navigation), captures are
+	// skipped entirely so they cannot contend with it, and after a failure the
+	// next attempt is backed off because a timed-out Go context does not cancel
+	// the screenshot command already executing inside Chromium.
+	captureAndTrack := func(ctx context.Context, cancel context.CancelFunc) (time.Duration, bool) {
+		if h.pages != nil && h.pages.IsPageBusy(sessionID) {
+			return h.interval, true
+		}
 		n, err := h.capture(ctx, sessionID)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -221,13 +238,16 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 				)
 				h.broadcast(sessionID, &LiveFrame{SessionID: sessionID, Type: "idle", Timestamp: time.Now()})
 				cancel()
-				if ticker != nil {
-					ticker.Stop()
-				}
 				h.stopStreamer(sessionID)
-				return false
+				return 0, false
 			}
-			return true
+			// Back off after a failure so a busy renderer gets time to finish
+			// the command that is still running inside it.
+			delay := time.Duration(failures) * h.interval
+			if delay > maxCaptureBackoff {
+				delay = maxCaptureBackoff
+			}
+			return delay, true
 		}
 		failures = 0
 		statsFrames++
@@ -235,7 +255,7 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 		if time.Since(statsSince) >= liveStatsInterval {
 			logStats(time.Now())
 		}
-		return true
+		return h.interval, true
 	}
 
 	// Re-acquire the page so the stream survives page recreation. The
@@ -264,35 +284,45 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 		ctx, cancel := context.WithCancel(pageCtx)
 		chromedp.ListenTarget(ctx, func(ev any) {
 			switch ev.(type) {
-			case *network.EventLoadingFinished, *page.EventFrameNavigated, *page.EventLoadEventFired:
-				markEvent()
+			case *page.EventFrameNavigated, *page.EventLoadEventFired:
+				markNav()
 			}
 		})
-		if !captureAndTrack(ctx, cancel, nil) {
+		delay, ok := captureAndTrack(ctx, cancel)
+		if !ok {
 			return
 		}
 
-		ticker := time.NewTicker(h.interval)
+		// A timer that is only re-armed after the previous capture completes.
+		// Unlike a ticker, a slow capture cannot leave a queued tick that fires
+		// immediately afterwards, stacking screenshot commands back-to-back.
 		for {
+			timer := time.NewTimer(delay)
 			select {
 			case <-stop:
+				timer.Stop()
 				cancel()
-				ticker.Stop()
 				return
 			case <-ctx.Done():
+				timer.Stop()
 				cancel()
-				ticker.Stop()
 				goto reacquire
-			case <-ticker.C:
-				if !captureAndTrack(ctx, cancel, ticker) {
+			case <-timer.C:
+				delay, ok = captureAndTrack(ctx, cancel)
+				if !ok {
+					timer.Stop()
 					return
 				}
-			case <-eventCh:
-				if !captureAndTrack(ctx, cancel, ticker) {
+			case <-navEvent:
+				timer.Stop()
+				delay, ok = captureAndTrack(ctx, cancel)
+				if !ok {
 					return
 				}
 			case <-trigger:
-				if !captureAndTrack(ctx, cancel, ticker) {
+				timer.Stop()
+				delay, ok = captureAndTrack(ctx, cancel)
+				if !ok {
 					return
 				}
 			}
@@ -300,6 +330,11 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 	reacquire:
 	}
 }
+
+// maxCaptureBackoff caps how long the live streamer waits after a failed
+// capture before trying again, giving a busy renderer time to finish the
+// screenshot command that is still executing inside Chromium.
+const maxCaptureBackoff = 5 * time.Second
 
 func round2(v float64) float64 {
 	return float64(int(v*100)) / 100

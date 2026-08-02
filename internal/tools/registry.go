@@ -20,7 +20,7 @@ func RegisterTools(s *server.MCPServer, screenshotQuality int, snapshotStore *wa
 	s.AddTool(mcp.NewTool("browser_navigate",
 		mcp.WithDescription("Navigate to a URL in the browser. Returns the page title and final URL after navigation."),
 		mcp.WithString("url", mcp.Description("The URL to navigate to"), mcp.Required()),
-		mcp.WithString("waitUntil", mcp.Description("Navigation wait condition: 'load', 'domcontentloaded', or 'networkidle'"), mcp.DefaultString("networkidle")),
+		mcp.WithString("waitUntil", mcp.Description("Navigation wait condition: 'load', 'domcontentloaded', or 'networkidle'"), mcp.DefaultString("domcontentloaded")),
 	), navigateHandler())
 
 	s.AddTool(mcp.NewTool("browser_screenshot",
@@ -145,6 +145,13 @@ func BrowserContextMiddleware(bm *browser.BrowserManager, browserTimeout time.Du
 			}
 			enrichedCtx := context.WithValue(ctx, BrowserKey, pageCtx)
 			enrichedCtx = context.WithValue(enrichedCtx, TimeoutKey, browserTimeout)
+			// Mark the page busy for the whole tool call so the /watch live
+			// streamer skips its screenshot loop while the tool (especially a
+			// navigation) is using the renderer. Without this, a resource-heavy
+			// page load and the live captures contend for the same renderer and
+			// the navigation can time out ("context deadline exceeded").
+			bm.SetPageBusy(sessionID, true)
+			defer bm.SetPageBusy(sessionID, false)
 			result, err := next(enrichedCtx, request)
 			if err != nil {
 				slog.Default().Warn("tool call failed",
@@ -152,6 +159,13 @@ func BrowserContextMiddleware(bm *browser.BrowserManager, browserTimeout time.Du
 					"session", sessionID,
 					"duration", time.Since(start).Round(time.Millisecond),
 					"error", err,
+				)
+			} else if result != nil && result.IsError {
+				slog.Default().Warn("tool call returned error",
+					"tool", toolName,
+					"session", sessionID,
+					"duration", time.Since(start).Round(time.Millisecond),
+					"result", resultText(result),
 				)
 			} else {
 				slog.Default().Info("tool call",

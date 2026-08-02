@@ -181,6 +181,7 @@
       let lastLiveFrame = 0;
       let idleTimer = null;
       let liveStartedAt = 0;
+      let liveErrors = 0;
 
       // ---------- Home (session list) ----------
 
@@ -296,6 +297,7 @@
         setLiveStatus('Connecting to live stream…', 'connecting');
         liveES = new EventSource(withAuth(WATCH_BASE + '/live/' + encodeURIComponent(sessionId)));
         liveES.onmessage = function (e) {
+          liveErrors = 0;
           let f;
           try { f = JSON.parse(e.data); } catch (_) { return; }
           if (f && f.type === 'idle') {
@@ -314,10 +316,20 @@
           liveUpdated.textContent = f.timestamp ? 'updated ' + timeAgo(f.timestamp) : '';
         };
         liveES.onopen = function () {
+          liveErrors = 0;
           setLiveStatus('Streaming', 'live');
         };
         liveES.onerror = function () {
-          setLiveStatus('Reconnecting…', 'connecting');
+          // A server-sent idle frame declares the session inactive; local
+          // errors only accumulate when the SSE connection itself fails.
+          liveErrors++;
+          if (liveErrors >= 3) {
+            setLiveStatus('Session inactive', 'idle');
+            livePlaceholder.textContent = 'Session inactive — the live stream could not be reached.';
+            closeLiveStream();
+          } else {
+            setLiveStatus('Reconnecting…', 'connecting');
+          }
         };
       }
 
@@ -338,12 +350,13 @@
         if (idleTimer) clearInterval(idleTimer);
         idleTimer = setInterval(function () {
           if (currentView !== 'live' || !currentSessionId) return;
-          if (lastLiveFrame > 0 && Date.now() - lastLiveFrame > 4000) {
-            setLiveStatus('Idle — no recent activity', 'idle');
-          } else if (lastLiveFrame === 0 && liveES && Date.now() - liveStartedAt > 5000) {
-            setLiveStatus('Session inactive', 'idle');
-            livePlaceholder.textContent = 'Session inactive — no live frames were received.';
-            closeLiveStream();
+          if (!liveES) return;
+          // Captures pause while a tool (e.g. a navigation) is using the page,
+          // so a quiet stream is expected and must not be treated as inactive.
+          if (lastLiveFrame > 0 && Date.now() - lastLiveFrame > 8000) {
+            setLiveStatus('Page loading — waiting for the next frame…', 'connecting');
+          } else if (lastLiveFrame === 0 && Date.now() - liveStartedAt > 8000) {
+            setLiveStatus('Page loading — waiting for the first frame…', 'connecting');
           }
         }, 1000);
       }

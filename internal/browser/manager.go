@@ -41,6 +41,8 @@ type BrowserManager struct {
 	browserCancel context.CancelFunc
 	mu            sync.RWMutex
 	pages         map[string]*PageSession
+	busyMu        sync.RWMutex
+	busy          map[string]bool
 	startedAt     time.Time
 	stopping      bool
 	chromiumOut   *chromiumOutput
@@ -51,7 +53,28 @@ func NewManager(cfg *config.Config, logger *slog.Logger) *BrowserManager {
 		cfg:    cfg,
 		logger: logger,
 		pages:  make(map[string]*PageSession),
+		busy:   make(map[string]bool),
 	}
+}
+
+// SetPageBusy records whether a tool call is currently using the session's
+// page. The live streamer consults this to pause its screenshot loop while a
+// tool (especially a navigation) is in flight, so capturing cannot starve the
+// navigation of the renderer.
+func (m *BrowserManager) SetPageBusy(sessionID string, busy bool) {
+	m.busyMu.Lock()
+	defer m.busyMu.Unlock()
+	if busy {
+		m.busy[sessionID] = true
+	} else {
+		delete(m.busy, sessionID)
+	}
+}
+
+func (m *BrowserManager) IsPageBusy(sessionID string) bool {
+	m.busyMu.RLock()
+	defer m.busyMu.RUnlock()
+	return m.busy[sessionID]
 }
 
 func (m *BrowserManager) Start() error {
@@ -358,12 +381,15 @@ func (m *BrowserManager) Sessions() []string {
 
 func (m *BrowserManager) ClosePage(sessionID string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if p, ok := m.pages[sessionID]; ok {
 		p.cancel()
 		delete(m.pages, sessionID)
 		m.logger.Info("page closed", "session", sessionID, "total_pages", len(m.pages))
 	}
+	m.mu.Unlock()
+	// A closed page can never be busy: clear any stale busy flag so the live
+	// streamer is not held back by a session that no longer exists.
+	m.SetPageBusy(sessionID, false)
 }
 
 func (m *BrowserManager) IsHealthy() bool {
