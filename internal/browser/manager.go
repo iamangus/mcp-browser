@@ -81,11 +81,11 @@ const browserStartTimeout = 60 * time.Second
 
 // logGPUInfo inspects the compositor's WebGL renderer string so we can see
 // which renderer is in use at startup. In headed mode under a virtual display
-// this should be SwiftShader ("accel: software"); a different or empty renderer
-// means rendering is not engaged as expected and points at a compositor or GPU
-// process problem. The SystemInfo CDP domain is browser-target-only and not
-// reachable from chromedp's page context, so we read the renderer string from a
-// page instead.
+// rendering is pure software (--disable-gpu), so WebGL may be unavailable and
+// the renderer empty — that is expected and not an error. A non-empty renderer
+// still tells us whether hardware acceleration engaged elsewhere. The
+// SystemInfo CDP domain is browser-target-only and not reachable from
+// chromedp's page context, so we read the renderer string from a page instead.
 func (m *BrowserManager) logGPUInfo(ctx context.Context) {
 	infoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -214,25 +214,24 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 		)
 	} else {
 		// Headed mode under a virtual display (Xvfb). Xvfb is a software
-		// framebuffer with no DRI3 extension, which Chromium's GPU process
-		// requires to present frames, so hardware acceleration is impossible
-		// here — always render with SwiftShader software. This is what
-		// ultimately gets a real page composited instead of the GPU process
-		// failing to initialize a Vulkan surface and taking the renderer with
-		// it.
+		// framebuffer with no DRI3 extension, so Chromium's GPU process cannot
+		// present frames: forcing any ANGLE backend (Vulkan or SwiftShader)
+		// makes the GPU process crash-loop on EGL init and take the renderer
+		// with it the moment a real page starts compositing. Pure software
+		// compositing (--disable-gpu) runs entirely in the browser process and
+		// needs no GPU process at all.
 		opts = append(opts, softwareGLFlags()...)
 	}
 	return opts
 }
 
-// softwareGLFlags forces SwiftShader software rendering, which is the only
-// viable path under a virtual display: Xvfb has no DRI3 so the GPU process
-// cannot present, and SwiftShader does not need it.
+// softwareGLFlags forces Chromium's pure software compositor (Skia/CPU). This
+// is the only viable path under a virtual display: Xvfb has no DRI3 so the GPU
+// process cannot present, and --disable-gpu avoids launching a GPU process
+// entirely, so there is nothing to crash.
 func softwareGLFlags() []chromedp.ExecAllocatorOption {
 	return []chromedp.ExecAllocatorOption{
 		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("use-angle", "swiftshader"),
-		chromedp.Flag("enable-unsafe-swiftshader", true),
 	}
 }
 
