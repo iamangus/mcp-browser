@@ -31,33 +31,21 @@ func mouseClickHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 		if clickCount < 1 {
 			clickCount = 1
 		}
-		buttonNum := mouseButtonToNumber(button)
 		pageCtx := getPageCtx(ctx)
+		timeout := getBrowserTimeout(ctx)
 		var titleBefore, titleAfter, urlBefore, urlAfter string
-		_ = chromedp.Run(pageCtx,
+		_ = runWithTimeout(pageCtx, timeout,
 			chromedp.Title(&titleBefore),
 			chromedp.Evaluate(`window.location.href`, &urlBefore),
 		)
-		script := fmt.Sprintf(`(function(){
-		var btn = %d;
-		var count = %d;
-		for (var i = 0; i < count; i++) {
-			document.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: %f, clientY: %f, button: btn}));
-			document.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: %f, clientY: %f, button: btn}));
-			document.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: %f, clientY: %f, button: btn, detail: count}));
-		}
-		window._lastMouseX = %f;
-		window._lastMouseY = %f;
-		return true;
-		})()`, buttonNum, clickCount, xf, yf, xf, yf, xf, yf, xf, yf)
-		err = chromedp.Run(pageCtx,
-			chromedp.Evaluate(script, nil),
+		err = runWithTimeout(pageCtx, timeout,
+			humanClickAtButton(func() (float64, float64) { return xf, yf }, cdpMouseButton(button), clickCount),
 			chromedp.Sleep(300*time.Millisecond),
 		)
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("mouse click failed: %v", err)), nil
 		}
-		_ = chromedp.Run(pageCtx,
+		_ = runWithTimeout(pageCtx, timeout,
 			chromedp.Title(&titleAfter),
 			chromedp.Evaluate(`window.location.href`, &urlAfter),
 		)
@@ -71,21 +59,6 @@ func mouseClickHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{mcp.NewTextContent(msg)},
 		}, nil
-	}
-}
-
-func mouseButtonToNumber(button string) int {
-	switch button {
-	case "right":
-		return 2
-	case "middle":
-		return 1
-	case "back":
-		return 3
-	case "forward":
-		return 4
-	default:
-		return 0
 	}
 }
 

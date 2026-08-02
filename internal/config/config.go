@@ -29,6 +29,8 @@ type Config struct {
 	Headless               bool
 	NoSandbox              bool
 	DisableAuth            bool
+	Stealth                bool
+	StealthUserAgent       string
 }
 
 func Load() (*Config, error) {
@@ -53,6 +55,8 @@ func Load() (*Config, error) {
 		Headless:               getBoolEnv("HEADLESS", true),
 		NoSandbox:              getBoolEnv("NO_SANDBOX", true),
 		DisableAuth:            getBoolEnv("DISABLE_AUTH", false),
+		Stealth:                getBoolEnv("STEALTH", true),
+		StealthUserAgent:       getEnv("STEALTH_USER_AGENT", ""),
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err

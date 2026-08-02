@@ -29,9 +29,14 @@ func clickHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("failed to get page state before click: %v", err)), nil
 		}
+		var pos struct {
+			X float64 `json:"x"`
+			Y float64 `json:"y"`
+		}
 		err = runWithTimeout(pageCtx, timeout,
 			chromedp.WaitVisible(selector, chromedp.ByQuery),
-			chromedp.Click(selector, chromedp.ByQuery),
+			chromedp.Evaluate(elementCenterScript(selector), &pos),
+			humanClickAtPoint(func() (float64, float64) { return pos.X, pos.Y }),
 			chromedp.Sleep(500*time.Millisecond),
 		)
 		if err != nil {

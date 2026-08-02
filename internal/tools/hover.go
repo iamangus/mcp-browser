@@ -21,21 +21,14 @@ func hoverHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		}
 		pageCtx := getPageCtx(ctx)
 		timeout := getBrowserTimeout(ctx)
-		script := fmt.Sprintf(`(function(){
-		var el = document.querySelector(%q);
-		if (!el) throw new Error('Element not found: ' + %q);
-		el.scrollIntoView({behavior: 'smooth', block: 'center'});
-		var rect = el.getBoundingClientRect();
-		var x = rect.left + rect.width / 2;
-		var y = rect.top + rect.height / 2;
-		el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true, clientX: x, clientY: y}));
-		el.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true, clientX: x, clientY: y}));
-		return {x: Math.round(x), y: Math.round(y), width: Math.round(rect.width), height: Math.round(rect.height)};
-		})()`, selector, selector)
-		var result map[string]any
+		var pos struct {
+			X float64 `json:"x"`
+			Y float64 `json:"y"`
+		}
 		err = runWithTimeout(pageCtx, timeout,
 			chromedp.WaitVisible(selector, chromedp.ByQuery),
-			chromedp.Evaluate(script, &result),
+			chromedp.Evaluate(elementCenterScript(selector), &pos),
+			moveTo(func() (float64, float64) { return pos.X, pos.Y }),
 			chromedp.Sleep(1*time.Second),
 		)
 		if err != nil {
@@ -45,8 +38,8 @@ func hoverHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp
 			return mcpErrorResult(fmt.Sprintf("hover failed: %v", err)), nil
 		}
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{mcp.NewTextContent(fmt.Sprintf("Hovered over %s at position (%v, %v) with size %vx%v",
-				selector, result["x"], result["y"], result["width"], result["height"]))},
+			Content: []mcp.Content{mcp.NewTextContent(fmt.Sprintf("Hovered over %s at position (%.0f, %.0f)",
+				selector, pos.X, pos.Y))},
 		}, nil
 	}
 }

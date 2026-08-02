@@ -47,43 +47,81 @@ func NewManager(cfg *config.Config, logger *slog.Logger) *BrowserManager {
 }
 
 func (m *BrowserManager) Start() error {
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("headless", m.cfg.Headless),
-		chromedp.Flag("no-sandbox", m.cfg.NoSandbox),
-		chromedp.Flag("disable-setuid-sandbox", true),
-		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.Flag("disable-extensions", true),
-		chromedp.Flag("disable-background-networking", true),
-		chromedp.Flag("disable-default-apps", true),
-		chromedp.Flag("disable-sync", true),
-		chromedp.Flag("disable-translate", true),
-		chromedp.Flag("hide-scrollbars", true),
-		chromedp.Flag("mute-audio", true),
-		chromedp.Flag("no-first-run", true),
-		chromedp.Flag("safebrowsing-disable-auto-update", true),
-		chromedp.Flag("disable-component-update", true),
-		chromedp.Flag("disable-background-timer-throttling", true),
-		chromedp.Flag("disable-backgrounding-occluded-windows", true),
-		chromedp.Flag("disable-renderer-backgrounding", true),
-		chromedp.Flag("disable-features", "TranslateUI"),
-		chromedp.Flag("disable-ipc-flooding-protection", true),
-		chromedp.Flag("disk-cache-dir", "/dev/null"),
-		chromedp.WindowSize(m.cfg.ScreenshotWidth, m.cfg.ScreenshotHeight),
-	)
-	if m.cfg.ChromiumPath != "" {
-		opts = append(opts, chromedp.ExecPath(m.cfg.ChromiumPath))
-	}
-	m.allocCtx, m.allocCancel = chromedp.NewExecAllocator(context.Background(), opts...)
+	m.allocCtx, m.allocCancel = chromedp.NewExecAllocator(context.Background(), m.execAllocatorOptions()...)
 	ctx, cancel := chromedp.NewContext(m.allocCtx, chromedp.WithErrorf(chromedpErrorf))
 	defer cancel()
 	if err := chromedp.Run(ctx); err != nil {
 		return fmt.Errorf("failed to start browser: %w", err)
 	}
 	m.startedAt = time.Now()
-	m.logger.Info("browser started", "chromium_path", m.cfg.ChromiumPath, "headless", m.cfg.Headless)
+	m.logger.Info("browser started", "chromium_path", m.cfg.ChromiumPath, "headless", m.cfg.Headless, "stealth", m.cfg.Stealth)
 	go m.cleanupLoop()
 	return nil
+}
+
+// execAllocatorOptions builds the Chromium launch flags. In stealth mode the
+// automation markers added by chromedp's defaults (--enable-automation) and by
+// our own suppression flags are countered or dropped, and headed mode launches
+// a clean near-default flag set so the browser fingerprints like a normal one.
+func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
+	if !m.cfg.Stealth {
+		opts := append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.Flag("headless", m.cfg.Headless),
+			chromedp.Flag("no-sandbox", m.cfg.NoSandbox),
+			chromedp.Flag("disable-setuid-sandbox", true),
+			chromedp.Flag("disable-gpu", true),
+			chromedp.Flag("disable-dev-shm-usage", true),
+			chromedp.Flag("disable-extensions", true),
+			chromedp.Flag("disable-background-networking", true),
+			chromedp.Flag("disable-default-apps", true),
+			chromedp.Flag("disable-sync", true),
+			chromedp.Flag("disable-translate", true),
+			chromedp.Flag("hide-scrollbars", true),
+			chromedp.Flag("mute-audio", true),
+			chromedp.Flag("no-first-run", true),
+			chromedp.Flag("safebrowsing-disable-auto-update", true),
+			chromedp.Flag("disable-component-update", true),
+			chromedp.Flag("disable-background-timer-throttling", true),
+			chromedp.Flag("disable-backgrounding-occluded-windows", true),
+			chromedp.Flag("disable-renderer-backgrounding", true),
+			chromedp.Flag("disable-features", "TranslateUI"),
+			chromedp.Flag("disable-ipc-flooding-protection", true),
+			chromedp.Flag("disk-cache-dir", "/dev/null"),
+			chromedp.WindowSize(m.cfg.ScreenshotWidth, m.cfg.ScreenshotHeight),
+		)
+		if m.cfg.ChromiumPath != "" {
+			opts = append(opts, chromedp.ExecPath(m.cfg.ChromiumPath))
+		}
+		return opts
+	}
+	opts := []chromedp.ExecAllocatorOption{
+		chromedp.Flag("headless", m.cfg.Headless),
+		chromedp.Flag("no-sandbox", m.cfg.NoSandbox),
+		chromedp.Flag("disable-setuid-sandbox", true),
+		chromedp.Flag("mute-audio", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("disable-component-update", true),
+		chromedp.Flag("disk-cache-dir", "/dev/null"),
+		chromedp.WindowSize(m.cfg.ScreenshotWidth, m.cfg.ScreenshotHeight),
+		chromedp.Flag("enable-automation", false),
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.Flag("lang", "en-US,en"),
+	}
+	if m.cfg.ChromiumPath != "" {
+		opts = append(opts, chromedp.ExecPath(m.cfg.ChromiumPath))
+	}
+	if m.cfg.StealthUserAgent != "" {
+		opts = append(opts, chromedp.UserAgent(m.cfg.StealthUserAgent))
+	}
+	if m.cfg.Headless {
+		opts = append(opts,
+			chromedp.Flag("disable-extensions", true),
+			chromedp.Flag("hide-scrollbars", true),
+			chromedp.Flag("disable-gpu", true),
+			chromedp.Flag("disable-dev-shm-usage", true),
+		)
+	}
+	return opts
 }
 
 func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, error) {
@@ -102,7 +140,15 @@ func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, err
 		return nil, fmt.Errorf("maximum concurrent pages (%d) reached", m.cfg.MaxConcurrentPages)
 	}
 	ctx, cancel := chromedp.NewContext(m.allocCtx)
-	if err := chromedp.Run(ctx); err != nil {
+	firstRun := func(ctx context.Context) error {
+		if m.cfg.Stealth {
+			if err := installStealthScript(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(firstRun)); err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create page: %w", err)
 	}

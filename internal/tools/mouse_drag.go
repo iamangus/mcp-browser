@@ -3,8 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math"
+	"time"
 
 	"github.com/angoo/mcp-browser/internal/validation"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -42,41 +45,57 @@ func mouseDragHandler() func(ctx context.Context, request mcp.CallToolRequest) (
 			delay = 1
 		}
 		pageCtx := getPageCtx(ctx)
-		script := fmt.Sprintf(`(function(){
-		return new Promise(function(resolve) {
-			var steps = %d;
-			var delay = %d;
-			var sx = %f, sy = %f, ex = %f, ey = %f;
-			document.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: sx, clientY: sy, button: 0}));
-			var i = 1;
-			function step() {
-				if (i > steps) {
-					document.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: ex, clientY: ey, button: 0}));
-					document.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: ex, clientY: ey, button: 0}));
-					window._lastMouseX = ex;
-					window._lastMouseY = ey;
-					resolve({steps: steps, delay: delay, from: {x: sx, y: sy}, to: {x: ex, y: ey}});
-					return;
+		timeout := getBrowserTimeout(ctx)
+		var result struct {
+			Steps int     `json:"steps"`
+			Delay int     `json:"delay"`
+			FromX float64 `json:"fromX"`
+			FromY float64 `json:"fromY"`
+			ToX   float64 `json:"toX"`
+			ToY   float64 `json:"toY"`
+		}
+		err = runWithTimeout(pageCtx, timeout,
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				fromX, fromY := readMousePos(ctx)
+				if err := moveMouse(ctx, fromX, fromY, startX, startY); err != nil {
+					return err
 				}
-				var progress = i / steps;
-				var px = sx + (ex - sx) * progress;
-				var py = sy + (ey - sy) * progress;
-				document.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: px, clientY: py}));
-				i++;
-				setTimeout(step, delay);
-			}
-			setTimeout(step, delay);
-		});
-		})()`, steps, delay, startX, startY, endX, endY)
-		var result map[string]any
-		err = chromedp.Run(pageCtx,
-			chromedp.Evaluate(script, &result),
+				if err := input.DispatchMouseEvent(input.MousePressed, startX, startY).
+					WithButton(input.Left).WithClickCount(1).Do(ctx); err != nil {
+					return err
+				}
+				for i := 1; i <= steps; i++ {
+					t := float64(i) / float64(steps)
+					e := 1 - math.Pow(1-t, 3)
+					x := startX + (endX-startX)*e
+					y := startY + (endY-startY)*e
+					if err := input.DispatchMouseEvent(input.MouseMoved, x, y).
+						WithButton(input.Left).WithButtons(1).Do(ctx); err != nil {
+						return err
+					}
+					if i < steps {
+						time.Sleep(time.Duration(delay) * time.Millisecond)
+					}
+				}
+				if err := input.DispatchMouseEvent(input.MouseReleased, endX, endY).
+					WithButton(input.Left).WithClickCount(1).Do(ctx); err != nil {
+					return err
+				}
+				writeMousePos(ctx, endX, endY)
+				result.Steps = steps
+				result.Delay = delay
+				result.FromX = startX
+				result.FromY = startY
+				result.ToX = endX
+				result.ToY = endY
+				return nil
+			}),
 		)
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("mouse drag failed: %v", err)), nil
 		}
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{mcp.NewTextContent(fmt.Sprintf("Drag completed: %v", result))},
+			Content: []mcp.Content{mcp.NewTextContent(fmt.Sprintf("Drag completed: %+v", result))},
 		}, nil
 	}
 }

@@ -39,6 +39,8 @@ All config is via environment variables. See [.env.example](.env.example) for de
 | `SCREENSHOT_QUALITY` | `80` | JPEG quality (1-100) |
 | `SCREENSHOT_DEFAULT_WIDTH` | `1280` | Default viewport width |
 | `SCREENSHOT_DEFAULT_HEIGHT` | `720` | Default viewport height |
+| `STEALTH` | `true` | Hide automation fingerprints (see [Cloudflare-protected sites](#cloudflare-protected-sites)) |
+| `STEALTH_USER_AGENT` | *(auto)* | Optional user-agent override used in stealth mode |
 | `RATE_LIMIT_MAX` | `100` | Max requests per window |
 | `RATE_LIMIT_WINDOW` | `15m` | Rate limit window |
 | `CORS_ORIGIN` | `*` | Allowed CORS origin |
@@ -119,6 +121,42 @@ accept query-param keys). If auth is disabled, the key is not needed.
 | `browser_get_cookies` | Get cookies, optionally filtered by name or domain. |
 | `browser_set_cookies` | Set cookies (auth tokens, sessions, etc.). |
 | `browser_delete_cookies` | Delete cookies by name (use `*` for all). |
+
+## Cloudflare-protected sites
+
+By default (`STEALTH=true`) the browser hides the automation fingerprints that
+bot detectors flag: the launch flags that expose `navigator.webdriver` are
+countered, a pre-document script restores the usual `window.chrome`, `plugins`,
+`languages`, `hardwareConcurrency` and permissions surfaces, and all mouse tools
+dispatch **real CDP input events** (`isTrusted=true`) instead of synthetic JS
+`MouseEvent`s — so `browser_click` moves the pointer like a human before
+pressing/releasing.
+
+Turnstile-style "click the checkbox" challenges still run a JS challenge around
+the checkbox, so work the page like this:
+
+1. `browser_screenshot` — find the checkbox.
+2. `browser_click` on the checkbox selector.
+3. **Wait 3-5 seconds** — the challenge resolves asynchronously; a screenshot
+   taken immediately will still show the spinner. Do not click again.
+4. `browser_screenshot` again to confirm it passed.
+
+Notes:
+
+- **Headed mode helps a lot.** Headless Chromium (even with the new `--headless`
+  mode) is far easier to fingerprint. Run with `HEADLESS=false` on a machine
+  with a display, or on a server use `xvfb-run -a ./mcp-browser`. In headed mode
+  stealth launches a clean near-default flag set (the heavy suppression flags are
+  dropped).
+- **IP reputation matters.** The browser may be clean but Cloudflare also scores
+  the TLS/JA3 and egress IP. On a residential IP these changes usually resolve
+  interactive challenges; on a flagged datacenter IP you will keep getting them
+  no matter how clean the browser is.
+- Stealth is best-effort against a moving target — it is not a guarantee, and
+  Cloudflare updates its detectors over time. Set `STEALTH=false` to restore the
+  original launch flags.
+- Only automate sites you are authorized to use. These settings make *our own
+  browser* look ordinary; they do not defeat or solve the challenge itself.
 
 ## Security
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/angoo/mcp-browser/internal/validation"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -27,28 +28,28 @@ func mouseUpHandler() func(ctx context.Context, request mcp.CallToolRequest) (*m
 		if err := validation.ValidateMouseButton(button); err != nil {
 			return mcpErrorResult(err.Error()), nil
 		}
-		btnNum := mouseButtonToNumber(button)
 		pageCtx := getPageCtx(ctx)
+		timeout := getBrowserTimeout(ctx)
 		var titleBefore, titleAfter, urlBefore, urlAfter string
-		_ = chromedp.Run(pageCtx,
+		_ = runWithTimeout(pageCtx, timeout,
 			chromedp.Title(&titleBefore),
 			chromedp.Evaluate(`window.location.href`, &urlBefore),
 		)
-		script := fmt.Sprintf(`(function(){
-		document.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: %f, clientY: %f, button: %d}));
-		document.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: %f, clientY: %f, button: %d}));
-		window._lastMouseX = %f;
-		window._lastMouseY = %f;
-		return true;
-		})()`, xf, yf, btnNum, xf, yf, btnNum, xf, yf)
-		err = chromedp.Run(pageCtx,
-			chromedp.Evaluate(script, nil),
+		err = runWithTimeout(pageCtx, timeout,
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				if err := input.DispatchMouseEvent(input.MouseReleased, xf, yf).
+					WithButton(cdpMouseButton(button)).WithClickCount(1).Do(ctx); err != nil {
+					return err
+				}
+				writeMousePos(ctx, xf, yf)
+				return nil
+			}),
 			chromedp.Sleep(300*time.Millisecond),
 		)
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("mouse up failed: %v", err)), nil
 		}
-		_ = chromedp.Run(pageCtx,
+		_ = runWithTimeout(pageCtx, timeout,
 			chromedp.Title(&titleAfter),
 			chromedp.Evaluate(`window.location.href`, &urlAfter),
 		)

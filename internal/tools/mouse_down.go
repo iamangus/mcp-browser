@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/angoo/mcp-browser/internal/validation"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -26,16 +27,16 @@ func mouseDownHandler() func(ctx context.Context, request mcp.CallToolRequest) (
 		if err := validation.ValidateMouseButton(button); err != nil {
 			return mcpErrorResult(err.Error()), nil
 		}
-		btnNum := mouseButtonToNumber(button)
 		pageCtx := getPageCtx(ctx)
-		script := fmt.Sprintf(`(function(){
-		document.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: %f, clientY: %f, button: %d}));
-		window._lastMouseX = %f;
-		window._lastMouseY = %f;
-		return true;
-		})()`, xf, yf, btnNum, xf, yf)
 		err = chromedp.Run(pageCtx,
-			chromedp.Evaluate(script, nil),
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				fromX, fromY := readMousePos(ctx)
+				if err := moveMouse(ctx, fromX, fromY, xf, yf); err != nil {
+					return err
+				}
+				return input.DispatchMouseEvent(input.MousePressed, xf, yf).
+					WithButton(cdpMouseButton(button)).WithClickCount(1).Do(ctx)
+			}),
 		)
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("mouse down failed: %v", err)), nil

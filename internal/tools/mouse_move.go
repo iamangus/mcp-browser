@@ -22,35 +22,28 @@ func mouseMoveHandler() func(ctx context.Context, request mcp.CallToolRequest) (
 		if err := validation.ValidateCoordinates(xf, yf); err != nil {
 			return mcpErrorResult(err.Error()), nil
 		}
-		steps := int(request.GetFloat("steps", 1))
-		if steps < 1 {
-			steps = 1
+		steps := int(request.GetFloat("steps", 0))
+		if steps < 0 {
+			steps = 0
 		}
 		pageCtx := getPageCtx(ctx)
-		script := fmt.Sprintf(`(function(){
-		var target = {x: %f, y: %f};
-		var steps = %d;
-		var currentX = window._lastMouseX || 0;
-		var currentY = window._lastMouseY || 0;
-		for (var i = 1; i <= steps; i++) {
-			var progress = i / steps;
-			var px = currentX + (target.x - currentX) * progress;
-			var py = currentY + (target.y - currentY) * progress;
-			document.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: px, clientY: py}));
+		var result struct {
+			X     float64 `json:"x"`
+			Y     float64 `json:"y"`
+			Steps int     `json:"steps"`
 		}
-		window._lastMouseX = target.x;
-		window._lastMouseY = target.y;
-		return {x: target.x, y: target.y, steps: steps};
-		})()`, xf, yf, steps)
-		var result map[string]any
 		err = chromedp.Run(pageCtx,
-			chromedp.Evaluate(script, &result),
+			moveToSteps(func() (float64, float64) { return xf, yf }, steps),
+			chromedp.Evaluate(`({x: window._lastMouseX, y: window._lastMouseY})`, &result),
 		)
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("mouse move failed: %v", err)), nil
 		}
+		if result.Steps == 0 {
+			result.Steps = steps
+		}
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{mcp.NewTextContent(fmt.Sprintf("Mouse moved to (%v, %v) in %v steps", result["x"], result["y"], result["steps"]))},
+			Content: []mcp.Content{mcp.NewTextContent(fmt.Sprintf("Mouse moved to (%v, %v) in %v steps", result.X, result.Y, result.Steps))},
 		}, nil
 	}
 }
