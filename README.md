@@ -152,15 +152,15 @@ Notes:
   starts a virtual display (`Xvfb`) plus a system/session D-Bus (headed Chromium
   stalls without one) and runs the browser headed at
   `XVFB_SCREEN=1280x720x24`.
-- **Headed mode renders in pure software.** Under a virtual display (Xvfb) there
-  is no DRI3 extension, which Chromium's GPU process needs to present frames, so
-  hardware acceleration is impossible regardless of any GPU exposed to the
-  container. Forcing any ANGLE backend (Vulkan or SwiftShader) makes the GPU
-  process crash-loop on EGL init and take the renderer with it the moment a real
-  page starts compositing, so headed mode instead launches with just
-  `--disable-gpu`: the browser process composits entirely in software (Skia/CPU)
-  with no GPU process at all. This means the container image does not ship GPU
-  userspace drivers and the pod does not need a GPU device resource.
+- **Headed mode renders in software (SwiftShader).** Under a virtual display
+  (Xvfb) there is no DRI3 extension, which Chromium's GPU process needs to
+  present frames, so hardware acceleration is impossible regardless of any GPU
+  exposed to the container. Headed mode therefore always uses SwiftShader
+  software rendering (`--use-angle=swiftshader --enable-unsafe-swiftshader`),
+  which is what gets a real page composited instead of the GPU process failing
+  to initialize and taking the renderer with it. This means the container image
+  does not ship GPU userspace drivers and the pod does not need a GPU device
+  resource.
 - **IP reputation matters.** The browser may be clean but Cloudflare also scores
   the TLS/JA3 and egress IP. On a residential IP these changes usually resolve
   interactive challenges; on a flagged datacenter IP you will keep getting them

@@ -215,23 +215,27 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 	} else {
 		// Headed mode under a virtual display (Xvfb). Xvfb is a software
 		// framebuffer with no DRI3 extension, so Chromium's GPU process cannot
-		// present frames: forcing any ANGLE backend (Vulkan or SwiftShader)
-		// makes the GPU process crash-loop on EGL init and take the renderer
-		// with it the moment a real page starts compositing. Pure software
-		// compositing (--disable-gpu) runs entirely in the browser process and
-		// needs no GPU process at all.
+		// present frames through any ANGLE backend. SwiftShader software
+		// rendering is the only path that keeps the renderer alive while a real
+		// page composites: without --use-angle=swiftshader and
+		// --enable-unsafe-swiftshader the GPU process's EGL init crashes and
+		// takes the page's renderer with it (surface context is canceled ~0.4s
+		// into the first navigation).
 		opts = append(opts, softwareGLFlags()...)
 	}
 	return opts
 }
 
-// softwareGLFlags forces Chromium's pure software compositor (Skia/CPU). This
-// is the only viable path under a virtual display: Xvfb has no DRI3 so the GPU
-// process cannot present, and --disable-gpu avoids launching a GPU process
-// entirely, so there is nothing to crash.
+// softwareGLFlags forces SwiftShader software rendering in headed mode under a
+// virtual display (Xvfb). Xvfb has no DRI3, so no ANGLE backend can present;
+// --use-angle=swiftshader routes compositing through SwiftShader and
+// --enable-unsafe-swiftshader unblocks it (it is "unsafe" because it is a
+// software renderer, which is exactly what we want here).
 func softwareGLFlags() []chromedp.ExecAllocatorOption {
 	return []chromedp.ExecAllocatorOption{
 		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("use-angle", "swiftshader"),
+		chromedp.Flag("enable-unsafe-swiftshader", true),
 	}
 }
 
