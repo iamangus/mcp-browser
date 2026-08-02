@@ -3,6 +3,8 @@ package watch
 import (
 	"context"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -150,6 +152,14 @@ func (h *LiveHub) stopStreamer(sessionID string) {
 	}
 }
 
+// maxConsecutiveCaptureFailures stops a streamer after this many back-to-back
+// screenshot failures so a stuck capture path cannot spin forever while the
+// process keeps allocating memory.
+const maxConsecutiveCaptureFailures = 10
+
+// liveStatsInterval is how often per-stream throughput is logged.
+const liveStatsInterval = 30 * time.Second
+
 func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan struct{}) {
 	eventCh := make(chan struct{}, 1)
 	markEvent := func() {
@@ -157,6 +167,69 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 		case eventCh <- struct{}{}:
 		default:
 		}
+	}
+
+	failures := 0
+	statsSince := time.Now()
+	statsFrames := 0
+	statsBytes := int64(0)
+	logStats := func(now time.Time) {
+		if statsFrames == 0 {
+			statsSince = now
+			return
+		}
+		elapsed := now.Sub(statsSince).Seconds()
+		if elapsed <= 0 {
+			elapsed = 1
+		}
+		h.logger.Info("live stream stats",
+			"session", sessionID,
+			"frames", statsFrames,
+			"bytes_kb", statsBytes/1024,
+			"fps", round2(float64(statsFrames)/elapsed),
+		)
+		statsSince = now
+		statsFrames = 0
+		statsBytes = 0
+	}
+
+	// captureAndTrack takes one screenshot and records the result. Returns
+	// false when the streamer should stop (page gone or too many failures).
+	captureAndTrack := func(ctx context.Context, cancel context.CancelFunc, ticker *time.Ticker) bool {
+		n, err := h.capture(ctx, sessionID)
+		if err != nil {
+			if isTransientCaptureError(err) {
+				failures = 0
+				return true
+			}
+			failures++
+			h.logger.Warn("live capture failed",
+				"session", sessionID,
+				"error", err,
+				"consecutive_failures", failures,
+			)
+			if failures >= maxConsecutiveCaptureFailures {
+				h.logger.Error("live stream stopped: repeated capture failures",
+					"session", sessionID,
+					"consecutive_failures", failures,
+				)
+				h.broadcast(sessionID, &LiveFrame{SessionID: sessionID, Type: "idle", Timestamp: time.Now()})
+				cancel()
+				if ticker != nil {
+					ticker.Stop()
+				}
+				h.stopStreamer(sessionID)
+				return false
+			}
+			return true
+		}
+		failures = 0
+		statsFrames++
+		statsBytes += int64(n)
+		if time.Since(statsSince) >= liveStatsInterval {
+			logStats(time.Now())
+		}
+		return true
 	}
 
 	// Re-acquire the page so the stream survives page recreation. The
@@ -189,7 +262,9 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 				markEvent()
 			}
 		})
-		h.capture(ctx, sessionID)
+		if !captureAndTrack(ctx, cancel, nil) {
+			return
+		}
 
 		ticker := time.NewTicker(h.interval)
 		for {
@@ -203,18 +278,39 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 				ticker.Stop()
 				goto reacquire
 			case <-ticker.C:
-				h.capture(ctx, sessionID)
+				if !captureAndTrack(ctx, cancel, ticker) {
+					return
+				}
 			case <-eventCh:
-				h.capture(ctx, sessionID)
+				if !captureAndTrack(ctx, cancel, ticker) {
+					return
+				}
 			case <-trigger:
-				h.capture(ctx, sessionID)
+				if !captureAndTrack(ctx, cancel, ticker) {
+					return
+				}
 			}
 		}
 	reacquire:
 	}
 }
 
-func (h *LiveHub) capture(pageCtx context.Context, sessionID string) {
+func isTransientCaptureError(err error) bool {
+	return errors.Is(err, context.Canceled)
+}
+
+func round2(v float64) float64 {
+	return float64(int(v*100)) / 100
+}
+
+// StreamCount returns the number of sessions currently being captured.
+func (h *LiveHub) StreamCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.subs)
+}
+
+func (h *LiveHub) capture(pageCtx context.Context, sessionID string) (int, error) {
 	ctx, cancel := context.WithTimeout(pageCtx, 5*time.Second)
 	defer cancel()
 
@@ -233,10 +329,10 @@ func (h *LiveHub) capture(pageCtx context.Context, sessionID string) {
 		return err
 	}))
 	if err != nil {
-		return
+		return 0, err
 	}
 	if len(buf) == 0 {
-		return
+		return 0, fmt.Errorf("empty screenshot")
 	}
 	h.broadcast(sessionID, &LiveFrame{
 		SessionID: sessionID,
@@ -244,6 +340,7 @@ func (h *LiveHub) capture(pageCtx context.Context, sessionID string) {
 		Mime:      mime,
 		Image:     base64.StdEncoding.EncodeToString(buf),
 	})
+	return len(buf), nil
 }
 
 func (h *LiveHub) broadcast(sessionID string, frame *LiveFrame) {
