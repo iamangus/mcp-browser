@@ -37,6 +37,7 @@ type BrowserManager struct {
 	mu          sync.RWMutex
 	pages       map[string]*PageSession
 	startedAt   time.Time
+	stopping    bool
 }
 
 func NewManager(cfg *config.Config, logger *slog.Logger) *BrowserManager {
@@ -48,7 +49,9 @@ func NewManager(cfg *config.Config, logger *slog.Logger) *BrowserManager {
 }
 
 func (m *BrowserManager) Start() error {
-	m.allocCtx, m.allocCancel = chromedp.NewExecAllocator(context.Background(), m.execAllocatorOptions()...)
+	chromiumOut := newChromiumOutput(m.logger)
+	m.allocCtx, m.allocCancel = chromedp.NewExecAllocator(context.Background(), append(m.execAllocatorOptions(),
+		chromedp.CombinedOutput(chromiumOut))...)
 	ctx, cancel := chromedp.NewContext(m.allocCtx, chromedp.WithErrorf(chromedpErrorf))
 	defer cancel()
 	// Bound the launch: a stuck browser (e.g. missing D-Bus or a GPU init
@@ -66,6 +69,8 @@ func (m *BrowserManager) Start() error {
 		"stealth", m.cfg.Stealth,
 		"gpu_render_node", renderNodeAvailable(),
 	)
+	m.logGPUInfo(ctx)
+	go m.watchBrowserExit(chromiumOut)
 	go m.cleanupLoop()
 	return nil
 }
@@ -73,6 +78,77 @@ func (m *BrowserManager) Start() error {
 // browserStartTimeout bounds how long we wait for the Chromium process to come
 // up before failing with an actionable error instead of hanging.
 const browserStartTimeout = 60 * time.Second
+
+// logGPUInfo inspects the compositor's WebGL renderer string so we can see
+// whether hardware acceleration actually engaged (e.g. "ANGLE (Intel, ...,
+// Vulkan 1.3.0 (Intel ...))" on the iGPU) or silently fell back to software
+// (e.g. "ANGLE (..., SwiftShader Device)"). The SystemInfo CDP domain is
+// browser-target-only and not reachable from chromedp's page context, so we
+// read the renderer string from a page instead.
+func (m *BrowserManager) logGPUInfo(ctx context.Context) {
+	infoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var renderer, vendor string
+	err := chromedp.Run(infoCtx,
+		chromedp.Evaluate(`
+			(() => {
+				const gl = document.createElement('canvas').getContext('webgl');
+				if (!gl) return { renderer: '', vendor: '' };
+				const ext = gl.getExtension('WEBGL_debug_renderer_info');
+				if (!ext) return { renderer: '', vendor: '' };
+				return {
+					renderer: String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)),
+					vendor: String(gl.getParameter(ext.UNMASKED_VENDOR_WEBGL)),
+				};
+			})()
+		`, &struct {
+			Renderer string `json:"renderer"`
+			Vendor   string `json:"vendor"`
+		}{}),
+	)
+	if err != nil {
+		m.logger.Warn("gpu info unavailable", "error", err)
+		return
+	}
+	attrs := []any{"vendor", vendor, "renderer", renderer}
+	if strings.Contains(strings.ToLower(renderer), "swiftshader") {
+		attrs = append(attrs, "accel", "software")
+	} else if renderer != "" {
+		attrs = append(attrs, "accel", "hardware")
+	}
+	m.logger.Info("gpu info", attrs...)
+}
+
+// watchBrowserExit logs the reason the browser process went away. chromedp
+// cancels the allocator context whenever the browser loses connection (e.g. the
+// process crashed or was killed), so watching m.allocCtx.Done lets us surface
+// the browser-side failure with the tail of Chromium's own stderr — the missing
+// diagnostic when a page target dies.
+func (m *BrowserManager) watchBrowserExit(chromiumOut *chromiumOutput) {
+	<-m.allocCtx.Done()
+	m.mu.Lock()
+	stopping := m.stopping
+	m.mu.Unlock()
+	if stopping {
+		// Shutdown() called allocCancel and we're exiting cleanly.
+		return
+	}
+	attrs := []any{"error", context.Cause(m.allocCtx)}
+	if tail := chromiumOut.Tail(); tail != "" {
+		attrs = append(attrs, "chromium_stderr_tail", tail)
+	}
+	m.logger.Error("browser process exited", attrs...)
+	// The browser is gone; every session's page context is now dead. Drop them
+	// all so the live UI reports the sessions as inactive immediately instead
+	// of waiting for the next cleanup tick.
+	m.mu.Lock()
+	for id, p := range m.pages {
+		p.cancel()
+		delete(m.pages, id)
+	}
+	m.mu.Unlock()
+	m.logger.Warn("browser process exited: cleared all session pages", "cleared", "all")
+}
 
 // execAllocatorOptions builds the Chromium launch flags. In stealth mode the
 // automation markers added by chromedp's defaults (--enable-automation) and by
@@ -117,6 +193,7 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("disable-component-update", true),
 		chromedp.Flag("disk-cache-dir", "/dev/null"),
+		chromedp.Flag("enable-logging", "stderr"),
 		chromedp.WindowSize(m.cfg.ScreenshotWidth, m.cfg.ScreenshotHeight),
 		chromedp.Flag("enable-automation", false),
 		chromedp.Flag("disable-blink-features", "AutomationControlled"),
@@ -343,6 +420,7 @@ const pageIdleTimeout = 30 * time.Minute
 
 func (m *BrowserManager) Shutdown() {
 	m.mu.Lock()
+	m.stopping = true
 	for id, p := range m.pages {
 		p.cancel()
 		delete(m.pages, id)
