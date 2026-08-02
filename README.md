@@ -147,9 +147,10 @@ Notes:
   mode) is far easier to fingerprint. Run with `HEADLESS=false` on a machine
   with a display, or on a server use `xvfb-run -a ./mcp-browser`. In headed mode
   stealth launches a clean near-default flag set (the heavy suppression flags are
-  dropped). In Docker, `HEADLESS=false` is handled automatically: the image
-  bundles Xvfb and runs the browser under a virtual display
-  (`XVFB_SCREEN=1280x720x24` configures its resolution).
+  dropped). In Docker, `HEADLESS=false` is handled automatically: the entrypoint
+  starts a virtual display (`Xvfb`) plus a system/session D-Bus (headed Chromium
+  stalls without one) and runs the browser headed at
+  `XVFB_SCREEN=1280x720x24`.
 - **IP reputation matters.** The browser may be clean but Cloudflare also scores
   the TLS/JA3 and egress IP. On a residential IP these changes usually resolve
   interactive challenges; on a flagged datacenter IP you will keep getting them

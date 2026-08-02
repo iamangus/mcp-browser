@@ -21,8 +21,10 @@ RUN apk add --no-cache \
     ca-certificates \
     ttf-freefont \
     dbus \
+    dbus-x11 \
     xvfb \
     xauth \
+    su-exec \
     && rm -rf /var/cache/apk/*
 
 ENV CHROMIUM_PATH=/usr/bin/chromium-browser
@@ -33,7 +35,6 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 
 RUN adduser -D -s /bin/sh appuser \
     && chmod +x /docker-entrypoint.sh
-USER appuser
 
 EXPOSE 3000
 

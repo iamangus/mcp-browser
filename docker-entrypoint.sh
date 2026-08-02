@@ -1,6 +1,22 @@
 #!/bin/sh
 set -e
 
+# Start the system D-Bus. Headed Chromium retries the connection in a tight
+# loop when the bus is absent, which stalls chromedp's startup handshake and
+# the HTTP server never comes up. The daemon needs root, hence this entrypoint
+# runs as root and drops privileges to appuser below.
+mkdir -p /run/dbus
+dbus-daemon --system --fork
+
+# Per-user session bus for Chromium. Run it as appuser so its socket stays
+# accessible after we drop privileges.
+su-exec appuser sh -c 'rm -f /home/appuser/.dbus-session; dbus-daemon --session --address=unix:path=/home/appuser/.dbus-session --fork' || true
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/home/appuser/.dbus-session"
+
+run_app() {
+	exec su-exec appuser env HOME=/home/appuser /usr/local/bin/mcp-browser "$@"
+}
+
 # Run the browser in headed mode under a virtual X display when HEADLESS=false.
 # This makes the Chromium process far less distinguishable from a real browser,
 # which materially improves reliability against Cloudflare-style challenges.
@@ -8,9 +24,10 @@ if [ "${HEADLESS}" = "false" ]; then
 	DISPLAY_NUM=":99"
 	SCREEN="${XVFB_SCREEN:-1280x720x24}"
 
+	mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 	rm -f "/tmp/.X${DISPLAY_NUM#:}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM#:}" 2>/dev/null || true
 
-	Xvfb "${DISPLAY_NUM}" -screen 0 "${SCREEN}" -nolisten tcp -ac >/dev/null 2>&1 &
+	su-exec appuser sh -c 'exec Xvfb "$1" -screen 0 "$2" -nolisten tcp -ac' sh "${DISPLAY_NUM}" "${SCREEN}" &
 	XVFB_PID=$!
 
 	i=0
@@ -25,7 +42,7 @@ if [ "${HEADLESS}" = "false" ]; then
 	done
 
 	export DISPLAY="${DISPLAY_NUM}"
-	exec /usr/local/bin/mcp-browser "$@"
+	run_app "$@"
 fi
 
-exec /usr/local/bin/mcp-browser "$@"
+run_app "$@"

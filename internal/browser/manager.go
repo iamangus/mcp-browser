@@ -50,14 +50,23 @@ func (m *BrowserManager) Start() error {
 	m.allocCtx, m.allocCancel = chromedp.NewExecAllocator(context.Background(), m.execAllocatorOptions()...)
 	ctx, cancel := chromedp.NewContext(m.allocCtx, chromedp.WithErrorf(chromedpErrorf))
 	defer cancel()
-	if err := chromedp.Run(ctx); err != nil {
-		return fmt.Errorf("failed to start browser: %w", err)
+	// Bound the launch: a stuck browser (e.g. missing D-Bus or a GPU init
+	// crash-loop in a container) would otherwise hang this call forever and
+	// prevent the HTTP server from ever starting.
+	startCtx, startCancel := context.WithTimeout(ctx, browserStartTimeout)
+	defer startCancel()
+	if err := chromedp.Run(startCtx); err != nil {
+		return fmt.Errorf("failed to start browser (timed out after %s): %w", browserStartTimeout, err)
 	}
 	m.startedAt = time.Now()
 	m.logger.Info("browser started", "chromium_path", m.cfg.ChromiumPath, "headless", m.cfg.Headless, "stealth", m.cfg.Stealth)
 	go m.cleanupLoop()
 	return nil
 }
+
+// browserStartTimeout bounds how long we wait for the Chromium process to come
+// up before failing with an actionable error instead of hanging.
+const browserStartTimeout = 60 * time.Second
 
 // execAllocatorOptions builds the Chromium launch flags. In stealth mode the
 // automation markers added by chromedp's defaults (--enable-automation) and by
@@ -119,6 +128,15 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 			chromedp.Flag("hide-scrollbars", true),
 			chromedp.Flag("disable-gpu", true),
 			chromedp.Flag("disable-dev-shm-usage", true),
+		)
+	} else {
+		// Headed mode under a virtual display (Xvfb): there is no GPU in the
+		// container, so force software rendering up front. Otherwise Chromium's
+		// GPU process crash-loops through Vulkan/EGL init and can stall startup.
+		opts = append(opts,
+			chromedp.Flag("disable-gpu", true),
+			chromedp.Flag("use-angle", "swiftshader"),
+			chromedp.Flag("enable-unsafe-swiftshader", true),
 		)
 	}
 	return opts
