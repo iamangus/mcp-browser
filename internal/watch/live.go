@@ -198,16 +198,22 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 	captureAndTrack := func(ctx context.Context, cancel context.CancelFunc, ticker *time.Ticker) bool {
 		n, err := h.capture(ctx, sessionID)
 		if err != nil {
-			if isTransientCaptureError(err) {
-				failures = 0
-				return true
+			if errors.Is(err, context.Canceled) {
+				// A canceled page context means the tab's target was destroyed
+				// (e.g. the renderer crashed). Count it toward the failure
+				// threshold so a dead page stops the streamer loudly instead of
+				// retrying silently forever, but log at Debug to avoid noise
+				// when an ordinary navigation aborts an in-flight screenshot.
+				failures++
+				h.logger.Debug("live capture canceled", "session", sessionID, "consecutive_failures", failures)
+			} else {
+				failures++
+				h.logger.Warn("live capture failed",
+					"session", sessionID,
+					"error", err,
+					"consecutive_failures", failures,
+				)
 			}
-			failures++
-			h.logger.Warn("live capture failed",
-				"session", sessionID,
-				"error", err,
-				"consecutive_failures", failures,
-			)
 			if failures >= maxConsecutiveCaptureFailures {
 				h.logger.Error("live stream stopped: repeated capture failures",
 					"session", sessionID,
@@ -293,10 +299,6 @@ func (h *LiveHub) streamLoop(sessionID string, stop chan struct{}, trigger chan 
 		}
 	reacquire:
 	}
-}
-
-func isTransientCaptureError(err error) bool {
-	return errors.Is(err, context.Canceled)
 }
 
 func round2(v float64) float64 {

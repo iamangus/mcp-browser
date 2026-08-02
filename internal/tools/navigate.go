@@ -16,8 +16,10 @@ func navigateHandler() func(ctx context.Context, request mcp.CallToolRequest) (*
 			return mcpErrorResult("url is required"), nil
 		}
 		pageCtx := getPageCtx(ctx)
+		navCtx, cancel := context.WithTimeout(pageCtx, getBrowserTimeout(ctx))
+		defer cancel()
 		var title, finalURL string
-		err = chromedp.Run(pageCtx,
+		err = chromedp.Run(navCtx,
 			chromedp.Navigate(rawURL),
 			chromedp.Sleep(500*time.Millisecond),
 			chromedp.Title(&title),

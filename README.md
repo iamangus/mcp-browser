@@ -47,6 +47,7 @@ All config is via environment variables. See [.env.example](.env.example) for de
 | `LIVE_INTERVAL` | `400ms` | Live-view screenshot cadence |
 | `LIVE_QUALITY` | `60` | Live-view JPEG quality (1-100) |
 | `MAX_SNAPSHOTS_PER_SESSION` | `50` | Screenshot history kept per session |
+| `DEBUG_PPROF` | `false` | Expose Go pprof profiles at `/debug/pprof` (diagnostics only) |
 
 ## Endpoints
 
@@ -151,6 +152,14 @@ Notes:
   starts a virtual display (`Xvfb`) plus a system/session D-Bus (headed Chromium
   stalls without one) and runs the browser headed at
   `XVFB_SCREEN=1280x720x24`.
+- **Hardware acceleration is automatic when a GPU is exposed.** Software
+  rendering (SwiftShader) is fragile and memory-hungry for heavy sites and can
+  crash renderers mid-challenge. In Kubernetes, if the pod requests a GPU
+  device (e.g. `gpu.intel.com/i915` from the Intel device plugin), the container
+  receives `/dev/dri/renderD128` and the server detects it and launches Chromium
+  with hardware ANGLE/Vulkan + VA-API flags instead of SwiftShader, falling back
+  automatically if Vulkan initialization fails. The image ships the Intel
+  userspace drivers (`mesa-vulkan-intel`, `intel-media-driver`).
 - **IP reputation matters.** The browser may be clean but Cloudflare also scores
   the TLS/JA3 and egress IP. On a residential IP these changes usually resolve
   interactive challenges; on a flagged datacenter IP you will keep getting them

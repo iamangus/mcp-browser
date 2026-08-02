@@ -31,6 +31,7 @@ type Config struct {
 	DisableAuth            bool
 	Stealth                bool
 	StealthUserAgent       string
+	PprofEnabled           bool
 }
 
 func Load() (*Config, error) {
@@ -57,6 +58,7 @@ func Load() (*Config, error) {
 		DisableAuth:            getBoolEnv("DISABLE_AUTH", false),
 		Stealth:                getBoolEnv("STEALTH", true),
 		StealthUserAgent:       getEnv("STEALTH_USER_AGENT", ""),
+		PprofEnabled:           getBoolEnv("DEBUG_PPROF", false),
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err

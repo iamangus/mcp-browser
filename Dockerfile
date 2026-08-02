@@ -25,6 +25,11 @@ RUN apk add --no-cache \
     xvfb \
     xauth \
     su-exec \
+    mesa-vulkan-intel \
+    vulkan-loader \
+    libdrm \
+    libva \
+    intel-media-driver \
     && rm -rf /var/cache/apk/*
 
 ENV CHROMIUM_PATH=/usr/bin/chromium-browser

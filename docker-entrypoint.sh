@@ -13,6 +13,16 @@ dbus-daemon --system --fork
 su-exec appuser sh -c 'rm -f /home/appuser/.dbus-session; dbus-daemon --session --address=unix:path=/home/appuser/.dbus-session --fork' || true
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/home/appuser/.dbus-session"
 
+# Make the GPU render node (exposed by the Kubernetes device plugin when the
+# pod requests e.g. gpu.intel.com/i915) readable by the unprivileged appuser.
+# Running as root, we chmod defensively since device plugin defaults vary.
+if [ -e /dev/dri/renderD128 ]; then
+	chmod 0666 /dev/dri/renderD128 2>/dev/null || true
+fi
+if [ -e /dev/dri/card0 ]; then
+	chmod 0666 /dev/dri/card0 2>/dev/null || true
+fi
+
 run_app() {
 	exec su-exec appuser env HOME=/home/appuser /usr/local/bin/mcp-browser "$@"
 }

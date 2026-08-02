@@ -116,6 +116,7 @@ func startMetricsLogger(log *slog.Logger, snapshotStore *watch.Store, browserMgr
 			"heap_alloc_mb", mem.Alloc/1024/1024,
 			"heap_inuse_mb", mem.HeapInuse/1024/1024,
 			"rss_mb", rssMB(),
+			"container_mem_mb", containerMemMB(),
 			"chromium_rss_mb", chromiumTreeRSSMB(),
 			"goroutines", runtime.NumGoroutine(),
 			"snapshot_sessions", sessions,
@@ -142,6 +143,25 @@ func rssMB() int64 {
 		return 0
 	}
 	return rssPages * int64(os.Getpagesize()) / 1024 / 1024
+}
+
+// containerMemMB returns the total memory used by the container cgroup in MiB
+// (Go process + Chromium subprocesses), reading the cgroup v2 memory.current
+// file with a v1 usage fallback. Returns 0 when neither is available.
+func containerMemMB() int64 {
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory.current"); err == nil {
+		var bytes int64
+		if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &bytes); err == nil {
+			return bytes / 1024 / 1024
+		}
+	}
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory/memory.usage_in_bytes"); err == nil {
+		var bytes int64
+		if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &bytes); err == nil {
+			return bytes / 1024 / 1024
+		}
+	}
+	return 0
 }
 
 // chromiumTreeRSSMB returns the combined resident set size in MiB of every

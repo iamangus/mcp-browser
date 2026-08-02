@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/angoo/mcp-browser/internal/browser"
@@ -129,20 +130,37 @@ var TimeoutKey = timeoutKey{}
 func BrowserContextMiddleware(bm *browser.BrowserManager, browserTimeout time.Duration) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			session := server.ClientSessionFromContext(ctx)
-			var sessionID string
-			if session != nil {
-				sessionID = session.SessionID()
-			} else {
-				sessionID = "default"
-			}
+			start := time.Now()
+			sessionID := getSessionID(ctx)
+			toolName := request.Params.Name
 			pageCtx, err := bm.GetOrCreatePage(sessionID)
 			if err != nil {
+				slog.Default().Warn("tool call failed: no browser page",
+					"tool", toolName,
+					"session", sessionID,
+					"duration", time.Since(start).Round(time.Millisecond),
+					"error", err,
+				)
 				return mcpErrorResult("failed to get browser page: " + err.Error()), nil
 			}
 			enrichedCtx := context.WithValue(ctx, BrowserKey, pageCtx)
 			enrichedCtx = context.WithValue(enrichedCtx, TimeoutKey, browserTimeout)
-			return next(enrichedCtx, request)
+			result, err := next(enrichedCtx, request)
+			if err != nil {
+				slog.Default().Warn("tool call failed",
+					"tool", toolName,
+					"session", sessionID,
+					"duration", time.Since(start).Round(time.Millisecond),
+					"error", err,
+				)
+			} else {
+				slog.Default().Info("tool call",
+					"tool", toolName,
+					"session", sessionID,
+					"duration", time.Since(start).Round(time.Millisecond),
+				)
+			}
+			return result, err
 		}
 	}
 }

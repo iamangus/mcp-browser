@@ -23,6 +23,7 @@ services:
       - MAX_CONCURRENT_PAGES=${MAX_CONCURRENT_PAGES:-10}
       - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-100}
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - DEBUG_PPROF=${DEBUG_PPROF:-false}
     volumes:
       - /dev/shm:/dev/shm
     healthcheck:

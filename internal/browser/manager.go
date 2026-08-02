@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -59,7 +60,12 @@ func (m *BrowserManager) Start() error {
 		return fmt.Errorf("failed to start browser (timed out after %s): %w", browserStartTimeout, err)
 	}
 	m.startedAt = time.Now()
-	m.logger.Info("browser started", "chromium_path", m.cfg.ChromiumPath, "headless", m.cfg.Headless, "stealth", m.cfg.Stealth)
+	m.logger.Info("browser started",
+		"chromium_path", m.cfg.ChromiumPath,
+		"headless", m.cfg.Headless,
+		"stealth", m.cfg.Stealth,
+		"gpu_render_node", renderNodeAvailable(),
+	)
 	go m.cleanupLoop()
 	return nil
 }
@@ -130,16 +136,55 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 			chromedp.Flag("disable-dev-shm-usage", true),
 		)
 	} else {
-		// Headed mode under a virtual display (Xvfb): there is no GPU in the
-		// container, so force software rendering up front. Otherwise Chromium's
-		// GPU process crash-loops through Vulkan/EGL init and can stall startup.
-		opts = append(opts,
-			chromedp.Flag("disable-gpu", true),
-			chromedp.Flag("use-angle", "swiftshader"),
-			chromedp.Flag("enable-unsafe-swiftshader", true),
-		)
+		// Headed mode under a virtual display (Xvfb). When a GPU render node is
+		// exposed to the container (e.g. an Intel iGPU via the Kubernetes
+		// device plugin's gpu.intel.com/i915 resource) composite on the real
+		// GPU through ANGLE/Vulkan; otherwise force SwiftShader software
+		// rendering so the GPU process does not crash-loop through Vulkan/EGL
+		// init and stall startup. Chromium falls back to SwiftShader on its own
+		// if Vulkan initialization fails, so the GPU path degrades safely.
+		if renderNodeAvailable() {
+			opts = append(opts, gpuAccelOptions()...)
+		} else {
+			opts = append(opts, softwareGLFlags()...)
+		}
 	}
 	return opts
+}
+
+// gpuAccelOptions enables hardware acceleration on the host GPU (ANGLE over
+// Vulkan) plus VA-API video decode for Chromium's GPU process.
+func gpuAccelOptions() []chromedp.ExecAllocatorOption {
+	return []chromedp.ExecAllocatorOption{
+		chromedp.Flag("use-gl", "angle"),
+		chromedp.Flag("use-angle", "vulkan"),
+		chromedp.Flag("enable-features", "Vulkan,UseSkiaRenderer,DefaultANGLEVulkan,VulkanFromANGLE,VaapiVideoDecoder,VaapiVideoIgnoreDriverChecks"),
+		chromedp.Flag("ignore-gpu-blocklist", true),
+		chromedp.Flag("enable-gpu-rasterization", true),
+		chromedp.Flag("enable-zero-copy", true),
+	}
+}
+
+// softwareGLFlags forces SwiftShader software rendering in headed mode when no
+// GPU render node is available.
+func softwareGLFlags() []chromedp.ExecAllocatorOption {
+	return []chromedp.ExecAllocatorOption{
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("use-angle", "swiftshader"),
+		chromedp.Flag("enable-unsafe-swiftshader", true),
+	}
+}
+
+// renderNodeAvailable reports whether a GPU render node is exposed to the
+// container under /dev/dri (e.g. via the Intel GPU device plugin's
+// gpu.intel.com/i915 resource).
+func renderNodeAvailable() bool {
+	for _, path := range []string{"/dev/dri/renderD128", "/dev/dri/card0"} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, error) {
@@ -252,28 +297,45 @@ func (m *BrowserManager) Stats() map[string]any {
 	}
 }
 
+// cleanupLoop runs every 30 seconds. It closes pages whose underlying context
+// has been cancelled (the chromedp target was destroyed, e.g. a crashed
+// renderer) so a dead tab cannot linger as a phantom "live" session while
+// retaining its per-target memory, and closes pages that have been idle past
+// the session timeout.
 func (m *BrowserManager) cleanupLoop() {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		var stale []string
+		var dead, stale []string
 		now := time.Now()
-		m.mu.RLock()
 		idleTimeout := m.cfg.SessionTimeout
 		if idleTimeout <= 0 {
 			idleTimeout = pageIdleTimeout
 		}
+		m.mu.RLock()
 		for sessionID, p := range m.pages {
+			if p.ctx.Err() != nil {
+				dead = append(dead, sessionID)
+				continue
+			}
 			if now.Sub(p.lastUsed) >= idleTimeout {
 				stale = append(stale, sessionID)
 			}
 		}
 		count := len(m.pages)
 		m.mu.RUnlock()
+		for _, sessionID := range dead {
+			m.logger.Warn("closing dead browser page", "session", sessionID)
+			m.ClosePage(sessionID)
+		}
 		for _, sessionID := range stale {
 			m.ClosePage(sessionID)
 		}
-		m.logger.Debug("browser cleanup check", "active_pages", count, "closed_stale_pages", len(stale))
+		if len(dead) > 0 || len(stale) > 0 {
+			m.logger.Info("browser cleanup", "closed_dead_pages", len(dead), "closed_stale_pages", len(stale), "remaining_pages", count-len(dead)-len(stale))
+		} else {
+			m.logger.Debug("browser cleanup check", "active_pages", count)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -75,6 +76,23 @@ func (s *Server) setupRoutes() {
 			s.router.With(auth.RequireAuthWithQuery).Mount("/watch", s.watchRoute)
 		}
 	}
+	if s.cfg.PprofEnabled {
+		s.logger.Info("pprof endpoints enabled at /debug/pprof")
+		s.router.Mount("/debug/pprof", pprofMux())
+	}
+}
+
+// pprofMux exposes the net/http/pprof handlers under a single mount point.
+// chi's Mount strips the /debug/pprof prefix, so handlers are registered at
+// their relative paths.
+func pprofMux() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", pprof.Index)
+	mux.HandleFunc("/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/profile", pprof.Profile)
+	mux.HandleFunc("/symbol", pprof.Symbol)
+	mux.HandleFunc("/trace", pprof.Trace)
+	return mux
 }
 
 func (s *Server) parseCorsOrigins() []string {
