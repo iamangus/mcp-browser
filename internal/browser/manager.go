@@ -29,15 +29,21 @@ type PageSession struct {
 }
 
 type BrowserManager struct {
-	cfg         *config.Config
-	logger      *slog.Logger
-	allocCtx    context.Context
-	allocCancel context.CancelFunc
-	mu          sync.RWMutex
-	pages       map[string]*PageSession
-	startedAt   time.Time
-	stopping    bool
-	chromiumOut *chromiumOutput
+	cfg    *config.Config
+	logger *slog.Logger
+	// allocCtx owns the Chromium process pool. browserCtx is the long-lived
+	// context for the single browser instance; every session page is created as
+	// a tab of it (chromedp.NewContext on browserCtx creates a tab, whereas
+	// NewContext on allocCtx would launch a whole new Chromium process).
+	allocCtx      context.Context
+	allocCancel   context.CancelFunc
+	browserCtx    context.Context
+	browserCancel context.CancelFunc
+	mu            sync.RWMutex
+	pages         map[string]*PageSession
+	startedAt     time.Time
+	stopping      bool
+	chromiumOut   *chromiumOutput
 }
 
 func NewManager(cfg *config.Config, logger *slog.Logger) *BrowserManager {
@@ -53,15 +59,31 @@ func (m *BrowserManager) Start() error {
 	m.chromiumOut = chromiumOut
 	m.allocCtx, m.allocCancel = chromedp.NewExecAllocator(context.Background(), append(m.execAllocatorOptions(),
 		chromedp.CombinedOutput(chromiumOut))...)
-	ctx, cancel := chromedp.NewContext(m.allocCtx, chromedp.WithErrorf(chromedpErrorf))
-	defer cancel()
+	// This context must outlive Start: it owns the browser that every session
+	// tab is created from. Cancelling it here would kill the browser and force
+	// each session to launch its own Chromium process.
+	m.browserCtx, m.browserCancel = chromedp.NewContext(m.allocCtx, chromedp.WithErrorf(chromedpErrorf))
 	// Bound the launch: a stuck browser (e.g. missing D-Bus or a GPU init
 	// crash-loop in a container) would otherwise hang this call forever and
 	// prevent the HTTP server from ever starting.
-	startCtx, startCancel := context.WithTimeout(ctx, browserStartTimeout)
-	defer startCancel()
-	if err := chromedp.Run(startCtx); err != nil {
-		return fmt.Errorf("failed to start browser (timed out after %s): %w", browserStartTimeout, err)
+	//
+	// The timeout MUST NOT be applied by deriving a context for chromedp.Run:
+	// chromedp allocates the Chromium process against the context handed to the
+	// allocating Run, so a derived timeout context would own the browser's
+	// lifetime and kill it as soon as this function returned.
+	runErr := make(chan error, 1)
+	go func() { runErr <- chromedp.Run(m.browserCtx) }()
+	select {
+	case err := <-runErr:
+		if err != nil {
+			m.browserCancel()
+			m.allocCancel()
+			return fmt.Errorf("failed to start browser: %w", err)
+		}
+	case <-time.After(browserStartTimeout):
+		m.browserCancel()
+		m.allocCancel()
+		return fmt.Errorf("failed to start browser: timed out after %s", browserStartTimeout)
 	}
 	m.startedAt = time.Now()
 	m.logger.Info("browser started",
@@ -69,7 +91,7 @@ func (m *BrowserManager) Start() error {
 		"headless", m.cfg.Headless,
 		"stealth", m.cfg.Stealth,
 	)
-	m.logGPUInfo(ctx)
+	m.logGPUInfo(m.browserCtx)
 	go m.watchBrowserExit(chromiumOut)
 	go m.cleanupLoop(chromiumOut)
 	return nil
@@ -89,7 +111,10 @@ const browserStartTimeout = 60 * time.Second
 func (m *BrowserManager) logGPUInfo(ctx context.Context) {
 	infoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	var renderer, vendor string
+	var info struct {
+		Renderer string `json:"renderer"`
+		Vendor   string `json:"vendor"`
+	}
 	err := chromedp.Run(infoCtx,
 		chromedp.Evaluate(`
 			(() => {
@@ -102,39 +127,41 @@ func (m *BrowserManager) logGPUInfo(ctx context.Context) {
 					vendor: String(gl.getParameter(ext.UNMASKED_VENDOR_WEBGL)),
 				};
 			})()
-		`, &struct {
-			Renderer string `json:"renderer"`
-			Vendor   string `json:"vendor"`
-		}{}),
+		`, &info),
 	)
 	if err != nil {
 		m.logger.Warn("gpu info unavailable", "error", err)
 		return
 	}
-	attrs := []any{"vendor", vendor, "renderer", renderer}
-	if strings.Contains(strings.ToLower(renderer), "swiftshader") {
+	attrs := []any{"vendor", info.Vendor, "renderer", info.Renderer}
+	if strings.Contains(strings.ToLower(info.Renderer), "swiftshader") {
 		attrs = append(attrs, "accel", "software")
-	} else if renderer != "" {
+	} else if info.Renderer != "" {
 		attrs = append(attrs, "accel", "hardware")
+	} else {
+		attrs = append(attrs, "accel", "none")
 	}
 	m.logger.Info("gpu info", attrs...)
 }
 
 // watchBrowserExit logs the reason the browser process went away. chromedp
 // cancels the allocator context whenever the browser loses connection (e.g. the
-// process crashed or was killed), so watching m.allocCtx.Done lets us surface
+// process crashed or was killed), so watching m.browserCtx.Done lets us surface
 // the browser-side failure with the tail of Chromium's own stderr — the missing
 // diagnostic when a page target dies.
 func (m *BrowserManager) watchBrowserExit(chromiumOut *chromiumOutput) {
-	<-m.allocCtx.Done()
+	// browserCtx is cancelled both when the Chromium process dies and when
+	// chromedp tears the allocator down on a lost connection, so it is the
+	// earliest signal that the browser is gone.
+	<-m.browserCtx.Done()
 	m.mu.Lock()
 	stopping := m.stopping
 	m.mu.Unlock()
 	if stopping {
-		// Shutdown() called allocCancel and we're exiting cleanly.
+		// Shutdown() cancelled the browser and we're exiting cleanly.
 		return
 	}
-	attrs := []any{"error", context.Cause(m.allocCtx)}
+	attrs := []any{"error", context.Cause(m.browserCtx)}
 	if tail := chromiumOut.Tail(); tail != "" {
 		attrs = append(attrs, "chromium_stderr_tail", tail)
 	}
@@ -256,7 +283,10 @@ func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, err
 	if len(m.pages) >= m.cfg.MaxConcurrentPages {
 		return nil, fmt.Errorf("maximum concurrent pages (%d) reached", m.cfg.MaxConcurrentPages)
 	}
-	ctx, cancel := chromedp.NewContext(m.allocCtx)
+	// Create a tab of the existing browser, in its own browser context so the
+	// session keeps isolated cookies/storage. Deriving from m.allocCtx instead
+	// would launch an entire new Chromium process per session.
+	ctx, cancel := chromedp.NewContext(m.browserCtx, chromedp.WithNewBrowserContext())
 	firstRun := func(ctx context.Context) error {
 		if m.cfg.Stealth {
 			if err := installStealthScript(ctx); err != nil {
@@ -265,11 +295,23 @@ func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, err
 		}
 		return nil
 	}
-	createCtx, createCancel := context.WithTimeout(ctx, pageCreateTimeout)
-	defer createCancel()
-	if err := chromedp.Run(createCtx, chromedp.ActionFunc(firstRun)); err != nil {
+	// As in Start, the timeout must not come from a context derived for
+	// chromedp.Run: the tab's CDP session and its message pump are bound to the
+	// context handed to the Run that creates the target, so a derived timeout
+	// context would kill the session as soon as this function returned. Every
+	// later command on the page would then block forever or fail with
+	// "context canceled".
+	runErr := make(chan error, 1)
+	go func() { runErr <- chromedp.Run(ctx, chromedp.ActionFunc(firstRun)) }()
+	select {
+	case err := <-runErr:
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to create page: %w", err)
+		}
+	case <-time.After(pageCreateTimeout):
 		cancel()
-		return nil, fmt.Errorf("failed to create page (timed out after %s): %w", pageCreateTimeout, err)
+		return nil, fmt.Errorf("failed to create page: timed out after %s", pageCreateTimeout)
 	}
 	m.pages[sessionID] = &PageSession{ctx: ctx, cancel: cancel, lastUsed: time.Now()}
 	m.logger.Info("page created", "session", sessionID, "total_pages", len(m.pages))
@@ -325,7 +367,7 @@ func (m *BrowserManager) ClosePage(sessionID string) {
 }
 
 func (m *BrowserManager) IsHealthy() bool {
-	ctx, cancel := context.WithTimeout(m.allocCtx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(m.browserCtx, 10*time.Second)
 	defer cancel()
 	var result string
 	err := chromedp.Run(ctx, chromedp.Evaluate(`navigator.userAgent`, &result))
@@ -405,6 +447,9 @@ func (m *BrowserManager) Shutdown() {
 		delete(m.pages, id)
 	}
 	m.mu.Unlock()
+	if m.browserCancel != nil {
+		m.browserCancel()
+	}
 	if m.allocCancel != nil {
 		m.allocCancel()
 	}
