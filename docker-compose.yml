@@ -10,7 +10,8 @@ services:
       - PORT=3000
       - HOST=0.0.0.0
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - HEADLESS=true
+      - HEADLESS=${HEADLESS:-true}
+      - XVFB_SCREEN=${XVFB_SCREEN:-1280x720x24}
       - NO_SANDBOX=true
       - CHROMIUM_PATH=/usr/bin/chromium-browser
       - SCREENSHOT_QUALITY=${SCREENSHOT_QUALITY:-80}
