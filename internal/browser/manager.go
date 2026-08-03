@@ -339,6 +339,15 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 		// takes the page's renderer with it (surface context is canceled ~0.4s
 		// into the first navigation).
 		opts = append(opts, softwareGLFlags()...)
+		// The container /dev/shm is sized 64M and Chromium's shared-memory
+		// discardable allocator (used for Skia mipmap chains when decoding
+		// large page images) exhausts it, calling
+		// TerminateBecauseOutOfMemory and killing the renderer (seen as a
+		// deterministic crash in partition_alloc::TerminateBecauseOutOfMemory
+		// from SkMipmap::Build in crash minidumps). Redirecting shared memory
+		// to /tmp (real disk) is the canonical container OOM fix; the headless
+		// branch already sets it.
+		opts = append(opts, chromedp.Flag("disable-dev-shm-usage", true))
 		// Breakpad is broken on musl (sched_getscheduler is unimplemented)
 		// and its minidumps are unreadable inside the container anyway.
 		// Disabling it makes a crashed renderer die immediately, so
