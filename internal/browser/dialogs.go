@@ -34,7 +34,7 @@ func shmAndChromiumMem() (shmemKB string, chromiumRSSMB int, chromiumProcs int) 
 	procs, _ := filepath.Glob("/proc/[0-9]*/statm")
 	var totalKB int64
 	for _, p := range procs {
-		cmdline, err := os.ReadFile(filepath.Dir(p) + "/cmdline")
+		cmdline, err := os.ReadFile(filepath.Dir(p) + "/cmdline") // #nosec G304 -- /proc scan from a fixed glob root
 		if err != nil {
 			continue
 		}
@@ -42,7 +42,7 @@ func shmAndChromiumMem() (shmemKB string, chromiumRSSMB int, chromiumProcs int) 
 		if !strings.Contains(cmd, "chromium") && !strings.Contains(cmd, "chrome_crashpad") {
 			continue
 		}
-		statm, err := os.ReadFile(p)
+		statm, err := os.ReadFile(p) // #nosec G304 -- /proc scan from a fixed glob root, deterministic paths
 		if err != nil {
 			continue
 		}
