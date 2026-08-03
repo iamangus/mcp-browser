@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -13,21 +14,17 @@ import (
 func getCookiesHandler() func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		pageCtx := getPageCtx(ctx)
-		script := `(function(){
-		return document.cookie.split('; ').filter(function(c) { return c.length > 0; }).map(function(c) {
-			var parts = c.split('=');
-			return {name: parts[0], value: parts.slice(1).join('=')};
-		});
-	})()`
-		var rawCookies []map[string]string
+		var cookies []*network.Cookie
 		err := runWithTimeout(pageCtx, getBrowserTimeout(ctx),
-			chromedp.Evaluate(script, &rawCookies),
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				var err error
+				cookies, err = network.GetCookies().Do(ctx)
+				return err
+			}),
 		)
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("get cookies failed: %v", err)), nil
 		}
-		currentDomain := ""
-		_ = runWithTimeout(pageCtx, getBrowserTimeout(ctx), chromedp.Evaluate(`window.location.hostname`, &currentDomain))
 
 		namesStr := request.GetString("names", "")
 		var filterNames []string
@@ -37,23 +34,29 @@ func getCookiesHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 				filterNames[i] = strings.TrimSpace(filterNames[i])
 			}
 		}
+		domainFilter := strings.TrimSpace(request.GetString("domain", ""))
 
 		filtered := make([]cookieInfo, 0)
-		for _, c := range rawCookies {
-			if len(filterNames) > 0 && !containsString(filterNames, c["name"]) {
+		for _, c := range cookies {
+			if len(filterNames) > 0 && !containsString(filterNames, c.Name) {
 				continue
 			}
-			cookie := cookieInfo{
-				Name:   c["name"],
-				Value:  c["value"],
-				Domain: currentDomain,
-				Path:   "/",
-				Size:   len(c["name"]) + len(c["value"]),
+			if domainFilter != "" && !cookieDomainMatches(c.Domain, domainFilter) {
+				continue
 			}
-			filtered = append(filtered, cookie)
+			filtered = append(filtered, cookieInfo{
+				Name:     c.Name,
+				Value:    c.Value,
+				Domain:   c.Domain,
+				Path:     c.Path,
+				HTTPOnly: c.HTTPOnly,
+				Secure:   c.Secure,
+				SameSite: string(c.SameSite),
+				Size:     int(c.Size),
+			})
 		}
 		data, _ := json.MarshalIndent(filtered, "", "  ")
-		msg := fmt.Sprintf("Retrieved %d cookie(s) for domain: %s\n\n%s", len(filtered), currentDomain, string(data))
+		msg := fmt.Sprintf("Retrieved %d cookie(s)\n\n%s", len(filtered), string(data))
 		if len(filtered) > 0 {
 			var authCookies []string
 			for _, c := range filtered {
@@ -70,6 +73,18 @@ func getCookiesHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 			Content: []mcp.Content{mcp.NewTextContent(msg)},
 		}, nil
 	}
+}
+
+// cookieDomainMatches reports whether cookieDomain (which may carry a leading
+// dot) belongs to the requested filter domain, matching the domain itself or
+// any subdomain.
+func cookieDomainMatches(cookieDomain, filter string) bool {
+	cookieDomain = strings.TrimPrefix(cookieDomain, ".")
+	filter = strings.TrimPrefix(filter, ".")
+	if strings.EqualFold(cookieDomain, filter) {
+		return true
+	}
+	return strings.HasSuffix(strings.ToLower(cookieDomain), "."+strings.ToLower(filter))
 }
 
 type cookieInfo struct {

@@ -92,24 +92,24 @@ accept query-param keys). If auth is disabled, the key is not needed.
 
 | Tool | Description |
 |---|---|
-| `browser_navigate` | Navigate to a URL. Returns page title and final URL. |
-| `browser_screenshot` | Capture a screenshot (full page or element). Returns base64 PNG. |
+| `browser_navigate` | Navigate to a URL. Returns page title and final URL. http/https only; localhost and private IPs rejected. |
+| `browser_screenshot` | Capture a screenshot (full page or element). Returns an image; `selector` beats `fullPage`; `width`/`height` permanently resize the session viewport. |
 
 ### Interaction
 
 | Tool | Description |
 |---|---|
-| `browser_click` | Click an element by CSS selector. |
-| `browser_fill` | Fill an input field (clears first, works with React). |
-| `browser_select` | Select a dropdown option by value or text. |
-| `browser_hover` | Hover over an element (detects tooltips/popovers). |
-| `browser_evaluate` | Execute JavaScript (dangerous patterns blocked). |
+| `browser_click` | Click an element by CSS selector. Preferred over `browser_mouse_click` when a stable selector exists (waits, scrolls, reports nav changes). |
+| `browser_fill` | Set an input/textarea value (clears first, works with React). Not real typing — no contenteditable/masked fields; use `browser_evaluate` for those. |
+| `browser_select` | Select an option from a **native** `<select>` by value or text. Custom dropdowns need clicks instead. |
+| `browser_hover` | Move the pointer over an element and wait. Does not read tooltips — screenshot afterwards to see them. |
+| `browser_evaluate` | Execute JavaScript; returns result + console output. Use `return <expr>` (JSON-serializable); `var` does not persist across calls. Blocked: `eval, Function, fetch, require, process, import, export, __proto__, constructor, prototype`. |
 
 ### Mouse Control
 
 | Tool | Description |
 |---|---|
-| `browser_mouse_click` | Click at x,y coordinates with configurable button/count. |
+| `browser_mouse_click` | Click at x,y with configurable button/count. Prefer `browser_click` when a selector works; use for exact pixels, canvas, shadow DOM, iframes, overlays, ambiguous selectors, right/middle/double-clicks. |
 | `browser_mouse_move` | Move mouse to x,y with optional smooth steps. |
 | `browser_mouse_down` | Press and hold mouse button at coordinates. |
 | `browser_mouse_up` | Release mouse button at coordinates. |
@@ -120,9 +120,24 @@ accept query-param keys). If auth is disabled, the key is not needed.
 
 | Tool | Description |
 |---|---|
-| `browser_get_cookies` | Get cookies, optionally filtered by name or domain. |
-| `browser_set_cookies` | Set cookies (auth tokens, sessions, etc.). |
+| `browser_get_cookies` | Get cookies, optionally filtered by name or domain. Includes HttpOnly cookies (via CDP). |
+| `browser_set_cookies` | Set cookies via `document.cookie` (auth tokens, sessions). Cannot set HttpOnly; `Secure` needs HTTPS. |
 | `browser_delete_cookies` | Delete cookies by name (use `*` for all). |
+
+### Choosing between `browser_click` and `browser_mouse_click`
+
+Prefer `browser_click` whenever the target has a stable, unique CSS selector: it
+waits for the element to be visible, scrolls it into view, clicks its center
+with a human-like pointer path, and reports title/URL changes.
+
+Use `browser_mouse_click` only when a selector cannot do the job:
+
+- exact-pixel clicks (e.g. a spot derived from a screenshot)
+- canvas/WebGL content
+- elements inside shadow DOM or cross-origin iframes (plain selectors can't reach them)
+- elements covered by overlays, where the visible pixel differs from the element's center
+- selectors that match multiple visually-identical elements
+- right/middle clicks or double-clicks (`browser_click` is left-click, single-click only)
 
 ## Cloudflare-protected sites
 

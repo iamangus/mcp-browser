@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/angoo/mcp-browser/internal/validation"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
@@ -18,6 +19,9 @@ func navigateHandler() func(ctx context.Context, request mcp.CallToolRequest) (*
 		rawURL, err := request.RequireString("url")
 		if err != nil {
 			return mcpErrorResult("url is required"), nil
+		}
+		if err := validation.ValidateURL(rawURL); err != nil {
+			return mcpErrorResult(err.Error()), nil
 		}
 		waitUntil := "domcontentloaded"
 		if v := request.GetString("waitUntil", ""); v != "" {
