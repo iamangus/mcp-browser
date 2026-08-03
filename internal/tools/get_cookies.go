@@ -20,14 +20,14 @@ func getCookiesHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 		});
 	})()`
 		var rawCookies []map[string]string
-		err := chromedp.Run(pageCtx,
+		err := runWithTimeout(pageCtx, getBrowserTimeout(ctx),
 			chromedp.Evaluate(script, &rawCookies),
 		)
 		if err != nil {
 			return mcpErrorResult(fmt.Sprintf("get cookies failed: %v", err)), nil
 		}
 		currentDomain := ""
-		_ = chromedp.Run(pageCtx, chromedp.Evaluate(`window.location.hostname`, &currentDomain))
+		_ = runWithTimeout(pageCtx, getBrowserTimeout(ctx), chromedp.Evaluate(`window.location.hostname`, &currentDomain))
 
 		namesStr := request.GetString("names", "")
 		var filterNames []string

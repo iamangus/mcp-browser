@@ -28,7 +28,7 @@ func mouseDownHandler() func(ctx context.Context, request mcp.CallToolRequest) (
 			return mcpErrorResult(err.Error()), nil
 		}
 		pageCtx := getPageCtx(ctx)
-		err = chromedp.Run(pageCtx,
+		err = runWithTimeout(pageCtx, getBrowserTimeout(ctx),
 			chromedp.ActionFunc(func(ctx context.Context) error {
 				fromX, fromY := readMousePos(ctx)
 				if err := moveMouse(ctx, fromX, fromY, xf, yf); err != nil {

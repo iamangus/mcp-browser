@@ -25,7 +25,7 @@ func deleteCookiesHandler() func(ctx context.Context, request mcp.CallToolReques
 		}
 		pageCtx := getPageCtx(ctx)
 		currentDomain := ""
-		_ = chromedp.Run(pageCtx, chromedp.Evaluate(`window.location.hostname`, &currentDomain))
+		_ = runWithTimeout(pageCtx, getBrowserTimeout(ctx), chromedp.Evaluate(`window.location.hostname`, &currentDomain))
 		var results []string
 		totalDeleted := 0
 		for i, cookie := range rawCookies {
@@ -52,7 +52,7 @@ func deleteCookiesHandler() func(ctx context.Context, request mcp.CallToolReques
 				return count;
 				})()`
 				var count float64
-				err := chromedp.Run(pageCtx,
+				err := runWithTimeout(pageCtx, getBrowserTimeout(ctx),
 					chromedp.Evaluate(script, &count),
 				)
 				if err != nil {
@@ -63,7 +63,7 @@ func deleteCookiesHandler() func(ctx context.Context, request mcp.CallToolReques
 				}
 			} else {
 				script := fmt.Sprintf(`document.cookie = %q`, name+"=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain="+domain)
-				err := chromedp.Run(pageCtx,
+				err := runWithTimeout(pageCtx, getBrowserTimeout(ctx),
 					chromedp.Evaluate(script, nil),
 				)
 				if err != nil {

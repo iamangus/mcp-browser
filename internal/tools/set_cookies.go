@@ -25,7 +25,7 @@ func setCookiesHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 		}
 		pageCtx := getPageCtx(ctx)
 		currentDomain := ""
-		_ = chromedp.Run(pageCtx, chromedp.Evaluate(`window.location.hostname`, &currentDomain))
+		_ = runWithTimeout(pageCtx, getBrowserTimeout(ctx), chromedp.Evaluate(`window.location.hostname`, &currentDomain))
 		var results []string
 		for i, cookie := range rawCookies {
 			name, _ := cookie["name"].(string)
@@ -63,7 +63,7 @@ func setCookiesHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 			}
 			script := fmt.Sprintf(`document.cookie = %q`, cookieStr)
 			var setVal string
-			err := chromedp.Run(pageCtx,
+			err := runWithTimeout(pageCtx, getBrowserTimeout(ctx),
 				chromedp.Evaluate(script, &setVal),
 			)
 			if err != nil {

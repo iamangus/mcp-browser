@@ -379,7 +379,7 @@ func (m *BrowserManager) GetOrCreatePage(sessionID string) (context.Context, err
 	ctx, cancel := chromedp.NewContext(m.browserCtx, chromedp.WithNewBrowserContext())
 	// Register the dialog/crash listeners before the first Run so no dialog
 	// can open unnoticed and wedge the tab's renderer.
-	installDialogHandler(ctx, sessionID, m.logger)
+	installDialogHandler(ctx, sessionID, m)
 	firstRun := func(ctx context.Context) error {
 		if err := page.Enable().Do(ctx); err != nil {
 			return err

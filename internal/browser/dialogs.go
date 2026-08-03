@@ -2,7 +2,6 @@ package browser
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/chromedp/cdproto/inspector"
 	"github.com/chromedp/cdproto/page"
@@ -20,13 +19,19 @@ import (
 // which unblocks the renderer and lets beforeunload navigations proceed.
 // Commands are issued from a goroutine: listeners run on the CDP pump loop,
 // so a synchronous chromedp.Run from inside the callback would deadlock the
-// target. It also Error-logs renderer crashes so a wedged tab can be told
-// apart from a crashed one in pod logs.
-func installDialogHandler(ctx context.Context, sessionID string, logger *slog.Logger) {
+// target.
+//
+// It also handles renderer crashes: the tab's target stays alive after its
+// renderer dies, so the page context is never cancelled and pending commands
+// would hang until their timeout while the tab shows "Aw, snap". Closing the
+// page cancels its context (unblocking any in-flight command), dumps
+// Chromium's stderr tail for the crash reason, and lets the next tool call
+// recreate a fresh tab, so the session recovers on its own.
+func installDialogHandler(ctx context.Context, sessionID string, m *BrowserManager) {
 	chromedp.ListenTarget(ctx, func(ev any) {
 		switch ev := ev.(type) {
 		case *page.EventJavascriptDialogOpening:
-			logger.Warn("javascript dialog opened, auto-accepting",
+			m.logger.Warn("javascript dialog opened, auto-accepting",
 				"session", sessionID,
 				"dialog_type", ev.Type,
 				"message", ev.Message,
@@ -36,11 +41,18 @@ func installDialogHandler(ctx context.Context, sessionID string, logger *slog.Lo
 				if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 					return page.HandleJavaScriptDialog(true).Do(ctx)
 				})); err != nil && ctx.Err() == nil {
-					logger.Warn("failed to accept javascript dialog", "session", sessionID, "error", err)
+					m.logger.Warn("failed to accept javascript dialog", "session", sessionID, "error", err)
 				}
 			}()
 		case *inspector.EventTargetCrashed:
-			logger.Error("renderer target crashed", "session", sessionID)
+			attrs := []any{"session", sessionID}
+			if m.chromiumOut != nil {
+				if tail := m.chromiumOut.Tail(); tail != "" {
+					attrs = append(attrs, "chromium_stderr_tail", tail)
+				}
+			}
+			m.logger.Error("renderer target crashed: closing page so the session recovers", attrs...)
+			m.ClosePage(sessionID)
 		}
 	})
 }

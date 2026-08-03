@@ -37,7 +37,7 @@ func mouseWheelHandler() func(ctx context.Context, request mcp.CallToolRequest) 
 				Y int64 `json:"y"`
 			} `json:"scrollAfter"`
 		}
-		err = chromedp.Run(pageCtx,
+		err = runWithTimeout(pageCtx, getBrowserTimeout(ctx),
 			chromedp.Evaluate(`({scrollBefore: {x: window.scrollX, y: window.scrollY}})`, &result),
 			chromedp.ActionFunc(func(ctx context.Context) error {
 				fromX, fromY := readMousePos(ctx)

@@ -32,7 +32,7 @@ func mouseMoveHandler() func(ctx context.Context, request mcp.CallToolRequest) (
 			Y     float64 `json:"y"`
 			Steps int     `json:"steps"`
 		}
-		err = chromedp.Run(pageCtx,
+		err = runWithTimeout(pageCtx, getBrowserTimeout(ctx),
 			moveToSteps(func() (float64, float64) { return xf, yf }, steps),
 			chromedp.Evaluate(`({x: window._lastMouseX, y: window._lastMouseY})`, &result),
 		)

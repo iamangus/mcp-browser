@@ -232,7 +232,7 @@ func saveSnapshot(ctx context.Context, store *watch.Store, image []byte, toolNam
 		return
 	}
 	var title, url string
-	_ = chromedp.Run(pageCtx,
+	_ = runWithTimeout(pageCtx, getBrowserTimeout(ctx),
 		chromedp.Title(&title),
 		chromedp.Evaluate(`window.location.href`, &url),
 	)

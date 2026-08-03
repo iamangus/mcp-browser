@@ -44,7 +44,7 @@ func evaluateHandler() func(ctx context.Context, request mcp.CallToolRequest) (*
 		}
 		})()`, script)
 		var raw string
-		err = chromedp.Run(pageCtx,
+		err = runWithTimeout(pageCtx, getBrowserTimeout(ctx),
 			chromedp.Evaluate(wrapper, &raw),
 		)
 		if err != nil {
