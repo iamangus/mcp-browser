@@ -79,6 +79,8 @@ func (s *Server) setupRoutes() {
 	if s.cfg.PprofEnabled {
 		s.logger.Info("pprof endpoints enabled at /debug/pprof")
 		s.router.Mount("/debug/pprof", pprofMux())
+		s.logger.Info("crash dump endpoints enabled at /debug/crashdumps")
+		s.router.Mount("/debug/crashdumps", crashdumpsMux(s.logger))
 	}
 }
 
