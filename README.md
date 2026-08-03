@@ -41,6 +41,7 @@ All config is via environment variables. See [.env.example](.env.example) for de
 | `SCREENSHOT_DEFAULT_HEIGHT` | `720` | Default viewport height |
 | `STEALTH` | `true` | Hide automation fingerprints (see [Cloudflare-protected sites](#cloudflare-protected-sites)) |
 | `STEALTH_USER_AGENT` | *(auto)* | Optional user-agent override used in stealth mode |
+| `DISABLE_WEBGL` | `true` | Disable WebGL in headed mode (see [Cloudflare-protected sites](#cloudflare-protected-sites)) |
 | `RATE_LIMIT_MAX` | `100` | Max requests per window |
 | `RATE_LIMIT_WINDOW` | `15m` | Rate limit window |
 | `CORS_ORIGIN` | `*` | Allowed CORS origin |
@@ -161,6 +162,16 @@ Notes:
   to initialize and taking the renderer with it. This means the container image
   does not ship GPU userspace drivers and the pod does not need a GPU device
   resource.
+- **WebGL is disabled in headed mode by default** (`DISABLE_WEBGL=true`). The
+  same Xvfb/DRI3 limitation means the GPU process cannot initialize any GL
+  backend, so a page that creates a WebGL context would hang its renderer on
+  the dead GPU channel until Chromium's watchdog kills it (~60s). With WebGL
+  disabled, pages get a `null` context (a common privacy-extension
+  configuration) and move on; canvas-2D fingerprinting is unaffected. Set
+  `DISABLE_WEBGL=false` to re-enable. Headless mode keeps WebGL (headless
+  SwiftShader needs no presentation and works). A genuine GPU WebGL string
+  would require replacing Xvfb with a headless Wayland compositor plus the
+  host iGPU — not currently supported.
 - **IP reputation matters.** The browser may be clean but Cloudflare also scores
   the TLS/JA3 and egress IP. On a residential IP these changes usually resolve
   interactive challenges; on a flagged datacenter IP you will keep getting them

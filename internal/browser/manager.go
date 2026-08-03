@@ -339,6 +339,26 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 		// takes the page's renderer with it (surface context is canceled ~0.4s
 		// into the first navigation).
 		opts = append(opts, softwareGLFlags()...)
+		// Breakpad is broken on musl (sched_getscheduler is unimplemented)
+		// and its minidumps are unreadable inside the container anyway.
+		// Disabling it makes a crashed renderer die immediately, so
+		// targetCrashed fires in ~1s instead of after up to ~60s of zombie
+		// wedging while breakpad hangs writing a dump.
+		opts = append(opts, chromedp.Flag("disable-breakpad", true))
+		if m.cfg.DisableWebGL {
+			// Xvfb has no DRI3, so the GPU process cannot initialize any GL
+			// backend (hardware Vulkan, SwANGLE, and Mesa GL all fail its
+			// presentation requirements). A page that creates a WebGL
+			// context hangs its renderer on the dead GPU channel until
+			// Chromium's watchdog kills it ~60s later. Failing WebGL cleanly
+			// (null context) lets fingerprint scripts record "no WebGL" and
+			// move on; canvas-2D fingerprinting is unaffected. Headless mode
+			// keeps WebGL: headless SwANGLE needs no presentation and works.
+			opts = append(opts,
+				chromedp.Flag("disable-webgl", true),
+				chromedp.Flag("disable-webgl2", true),
+			)
+		}
 	}
 	return opts
 }
