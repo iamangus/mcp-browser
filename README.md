@@ -162,13 +162,17 @@ Notes:
   to initialize and taking the renderer with it. This means the container image
   does not ship GPU userspace drivers and the pod does not need a GPU device
   resource.
-- **WebGL is disabled in headed mode by default** (`DISABLE_WEBGL=true`). The
+- **WebGL/WebGPU are disabled in headed mode by default** (`DISABLE_WEBGL=true`). The
   same Xvfb/DRI3 limitation means the GPU process cannot initialize any GL
   backend, so a page that creates a WebGL context would hang its renderer on
   the dead GPU channel until Chromium's watchdog kills it (~60s). With WebGL
   disabled, pages get a `null` context (a common privacy-extension
-  configuration) and move on; canvas-2D fingerprinting is unaffected. Set
-  `DISABLE_WEBGL=false` to re-enable. Headless mode keeps WebGL (headless
+  configuration) and move on; canvas-2D fingerprinting is unaffected. WebGPU is
+  the same trap but worse: it routes through Dawn, which tries to init Vulkan
+  even with WebGL disabled, crashing the GPU process and wedging the renderer
+  (a deterministic CHECK, confirmed via crash minidumps, on `navigator.gpu`
+  probes) — so the WebGPU feature and Vulkan backend are disabled too, making
+  `navigator.gpu` fail cleanly. Set `DISABLE_WEBGL=false` to re-enable. Headless mode keeps WebGL (headless
   SwiftShader needs no presentation and works). A genuine GPU WebGL string
   would require replacing Xvfb with a headless Wayland compositor plus the
   host iGPU — not currently supported.

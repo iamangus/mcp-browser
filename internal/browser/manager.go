@@ -354,9 +354,19 @@ func (m *BrowserManager) execAllocatorOptions() []chromedp.ExecAllocatorOption {
 			// (null context) lets fingerprint scripts record "no WebGL" and
 			// move on; canvas-2D fingerprinting is unaffected. Headless mode
 			// keeps WebGL: headless SwANGLE needs no presentation and works.
+			//
+			// WebGPU is the same trap but worse: it routes through Dawn, and
+			// Dawn tries to init Vulkan even with WebGL disabled. With no
+			// Vulkan drivers and no loadable libvk_swiftshader.so, Dawn's
+			// adapter init fails, the GPU process crashes, and the renderer
+			// wedges until the watchdog SIGTRAPs it (observed via crash
+			// minidumps: deterministic CHECK at chrom+0x64a0fbe on
+			// navigator.gpu probes). Disabling the WebGPU feature makes
+			// navigator.gpu fail cleanly so fingerprint scripts move on.
 			opts = append(opts,
 				chromedp.Flag("disable-webgl", true),
 				chromedp.Flag("disable-webgl2", true),
+				chromedp.Flag("disable-features", "WebGPU,Vulkan"),
 			)
 		}
 	}
