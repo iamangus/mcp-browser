@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestFindCrashDumps(t *testing.T) {
@@ -98,5 +100,36 @@ func TestCrashdumpsHandler(t *testing.T) {
 		if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
 			t.Fatalf("traversal %q: status %d, want 400/404", name, rec.Code)
 		}
+	}
+}
+
+// TestCrashdumpsMountedViaChi guards against the chi.Mount gotcha: for a plain
+// http.ServeMux (not a chi sub-router) chi does NOT strip the mount prefix, so
+// the inner mux would see "/debug/crashdumps/{name}" and fall through to the
+// catch-all list handler. The production mount wraps the mux in
+// http.StripPrefix; this test reproduced the bug before that fix.
+func TestCrashdumpsMountedViaChi(t *testing.T) {
+	root := t.TempDir()
+	dumpDir := filepath.Join(root, "Crashpad", "completed")
+	if err := os.MkdirAll(dumpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("REAL-MINIDUMP-BYTES")
+	if err := os.WriteFile(filepath.Join(dumpDir, "mounted-beef.dmp"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := chi.NewRouter()
+	r.Mount("/debug/crashdumps", http.StripPrefix("/debug/crashdumps", crashdumpsMux(logger, root)))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/crashdumps/mounted-beef.dmp", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mounted download: status %d, want 200", rec.Code)
+	}
+	body, _ := io.ReadAll(rec.Result().Body)
+	if string(body) != string(content) {
+		t.Fatalf("mounted download: got %q, want %q", body, content)
 	}
 }
